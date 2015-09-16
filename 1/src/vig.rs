@@ -8,7 +8,7 @@ fn main() {
 
 fn solve(first: String, op: String, second: String) -> i32 {
     if let (Ok(first), Ok(second)) = (first.parse::<i32>(), second.parse::<i32>()) {
-        match op {
+        match &op[..] {
             "+" => first + second,
             "-" => first - second,
             "/" => first / second,
