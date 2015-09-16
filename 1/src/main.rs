@@ -37,10 +37,10 @@ impl Response {
     /// Generates the properly formatted message for each response type,
     /// and returns it in its byte encoding
     fn to_bytes(&self) -> Vec<u8> {
-        let msg = match self {
-            &Response::Hello(ref id)        => format!("HELLO {}", id),
-            &Response::Solution(ref answer) => format!("{}", answer),
-            &Response::Bye(ref secret)      => format!("BYE {}", secret),
+        let msg = match *self {
+            Response::Hello(ref id)        => format!("HELLO {}", id),
+            Response::Solution(ref answer) => format!("{}", answer),
+            Response::Bye(ref secret)      => format!("BYE {}", secret),
         };
         format!("cs3700fall2015 {}\n", msg).as_bytes().to_owned()
     }
