@@ -1,7 +1,12 @@
 [package]
 name="client"
 version="0.0.1"
-authors=["James McNamara <jamessscottmcnamara@gmail.com>"]
+authors=["James McNamara <jamessscottmcnamara@gmail.com>", 
+         "Vignesh Mohankumar <vignesh@vigneshmohankumar.com>"]
 
-[dependencies]
-argparse="*"
+# CCS cargo has some weird issues with downloading a completely
+# inaccurate dependency, so here we explicitly state the revision
+# we want
+[dependencies.argparse]
+git="https://github.com/tailhook/rust-argparse"
+rev="91d82cfaeb26d27645ccbe35ee4e90e46a58c5ba"

@@ -1,4 +1,3 @@
-#![warn(dead_code)]
 extern crate argparse;
 
 use argparse::{ArgumentParser, Store, StoreTrue};
@@ -6,6 +5,7 @@ use std::io::{Error, Read, Write};
 use std::net::TcpStream;
 
 /// Structure to hold results of parsing command line arguments
+#[allow(dead_code)]
 struct UserPrefs {
     port: u16,
     secure: bool,
