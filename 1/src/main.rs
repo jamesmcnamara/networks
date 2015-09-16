@@ -129,7 +129,7 @@ fn read_loop(mut socket: TcpStream) -> Result<(), Error> {
                 try!(socket.write(&solution.to_bytes())); 
             },
             Response::Bye(secret) => { 
-               println!("Success! The secret message was {}", secret);
+               println!("{}", secret);
                break;
             },
             Response::Hello(_)    => 
@@ -174,12 +174,9 @@ fn init(prefs: UserPrefs) -> Result<TcpStream, Error> {
     Ok(socket)
 }
 
-
+#[allow(unused_must_use)]
 fn main() {
-    match init(parse_args()).map(read_loop) {
-        Ok(_)  => println!("The operation was a complete success!"),
-        Err(e) => println!("The operation failed with code {}", e),
-    }
+    init(parse_args()).map(read_loop);
 }
 
 
