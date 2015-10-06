@@ -1,0 +1,101 @@
+#!/usr/bin/python -u
+# The -u makes output unbuffered, so it will show up immediately
+from __future__ import print_function
+
+import json
+import sys
+from socket import socket, AF_UNIX, SOCK_SEQPACKET
+from select import select
+
+
+class Bridge(object):
+    def __init__(self, id, lans):
+        self.id = id
+        self.lans = {port: lan for port, lan in map(self.create_socket, lans)}
+        self.root = int(self.id, 16)
+        self.cost = 0
+        self.port = 0
+        self.router = {}
+        self.ids = set()
+        self.blacklist = set()
+
+    @staticmethod
+    def create_socket(lan):
+        """ creates sockets and connects to them """
+        def pad(name):
+            """ pads the name with null bytes at the end """
+            return '\0' + name + '\0' * (107 - len(name))
+        s = socket(AF_UNIX, SOCK_SEQPACKET)
+        s.connect(pad(lan))
+        return s.fileno(), s
+
+    def check_network(self):
+        ready = select(self.lans.values(), [], [], 0)[0]
+        for lan in ready:
+            msg = json.loads(lan.recv(1500))
+            fd = lan.fileno()
+            id = msg['message']['id']
+            if id in self.ids or fd in self.blacklist:
+                print("Not forwarding message {}".format(id))
+                continue
+            self.ids.add(id)
+            if msg['type'] == 'bpdu':
+                self.process_bpdu(msg, fd)
+            else:
+                self.forward_message(msg, fd)
+
+    def process_bpdu(self, bpdu, port):
+        bpdu_root = bpdu['message']['root']
+        bpdu_cost = bpdu['message']['cost']
+        if bpdu_root < self.root or bpdu_root == self.root and bpdu_cost + 1 < self.cost:
+            self.root = bpdu['message']['root']
+            self.cost = int(bpdu['message']['cost']) + 1
+            self.port = port
+            print("New root: {}/{}".format(hex(self.id), self.root))
+            print("Root port: {}/{}".format(hex(self.id), self.port))
+
+    def forward_message(self, msg, port):
+        id, port, src, dst = msg['message']['id'], port, msg['source'], msg['dest']
+        print("Received message {} on port {} from {} to {}".format(id, port, src, dst))
+        if src not in self.router:
+            print("Designated port: {}/{}".format(src, port))
+            self.router[src] = port
+        if dst in self.router:
+            dst_port = self.lans[self.router[dst]].fileno()
+            print("Forwarding message {} to port {}".format(id, dst_port))
+            self.send(dst_port, msg)
+        else:
+            print("Broadcasting message {} on all ports".format(id))
+            self.broadcast(msg, exclude=[port])
+
+    def build_bpdu(self):
+        return json.dumps({
+            'type': 'bpdu',
+            'source': hex(self.id),
+            'dest': 'ffff',
+            'message': {
+                'id': self.id,
+                'root': self.root,
+                'cost': self.cost
+            }
+        })
+
+    def send(self, port, msg):
+        self.lans[port].sendall(json.dumps(msg))
+
+    def broadcast(self, msg, exclude=None):
+        if exclude is None:
+            exclude = []
+        for port in self.lans:
+            if port not in exclude:
+                self.send(port, msg)
+
+
+def main():
+    id, lans = sys.argv[1], sys.argv[2:]
+    bridge = Bridge(id, lans)
+    while True:
+        bridge.check_network()
+
+if __name__ == "__main__":
+    main()
