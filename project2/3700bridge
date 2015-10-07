@@ -4,6 +4,7 @@ from __future__ import print_function
 
 import json
 import sys
+from collections import defaultdict
 from socket import socket, AF_UNIX, SOCK_SEQPACKET
 from select import select
 from threading import Thread, Lock, Event
@@ -26,7 +27,9 @@ class Timeout(Thread):
             if self.event.is_set():
                 self.event.clear()
             else:
-                self.target()
+                if self.target():
+                    print_debug("returning", "cyan")
+                    break 
 
 
 def print_debug(msg, color="red"):
@@ -41,28 +44,55 @@ def print_debug(msg, color="red"):
     print(COLOR.format(color_codes[color]) + '[DEBUG] ' + msg + CLEAR)
 
 
+class Blacklist(object):
+    def __init__(self):
+        self.ports = set()
+        self.lock = Lock()
+
+    def __contains__(self, port):
+        with self.lock:
+            return port in self.ports
+    
+    def add(self, port):
+        with self.lock:
+            self.ports.add(port)
+
+    def reset(self):
+        with self.lock:
+            self.ports = set()
+
+    def remove(self, port):
+        with self.lock:
+            if port in self.ports:
+                self.ports.remove(port)
+
 class Bridge(object):
     def __init__(self, id, lans):
         self.id = id
         self.lans = {port: lan for port, lan in map(self.create_socket, lans)}
+        self.bridge_timers = {}
+        self.bridge_timers_lock = Lock()
         self.root = self.id
         self.cost = 0
         self.root_port = 0
         self.router = {}
         self.ids = set()
-        self.blacklist = set()
-        self.lans_lock = Lock()
+        self.blacklist = Blacklist()
+        self.router_lock = Lock()
         self.root_timeout = None
         self.bpdu_updater =  Timeout(self.broadcast_bpdu, 0.5)
 
-    def expire_root_port(self):
-        self.reset_root()
-        with self.lans_lock:
-            self.lans = {
-                host: port
-                for host, port in self.router.iteritems()
-                if port != self.root_port
-            }
+    def expire_port(self, port):
+        def port_expire():
+            with self.bridge_timers_lock:
+                self.blacklist.remove(port)
+                if port == self.root_port:
+                    self.reset_root()
+                else:
+                    if port in self.bridge_timers:
+                        self.bridge_timers.pop(port)
+            return True
+        return port_expire
 
     @staticmethod
     def create_socket(lan):
@@ -80,6 +110,7 @@ class Bridge(object):
             msg = json.loads(lan.recv(1500))
             port = lan.fileno()
             if msg['type'] == 'bpdu':
+                self.update_or_add_bridge(port)
                 self.process_bpdu(msg, port)
             else:
                 id = msg['message']['id']
@@ -103,7 +134,7 @@ class Bridge(object):
             print_debug("Root port: {}/{}".format(self.id, self.root_port))
             self.broadcast_bpdu()
             self.bpdu_updater.restart()
-            self.blacklist = set()
+            self.blacklist.reset() 
         elif (bpdu_root == self.root
                 and bpdu_cost == self.cost
                 and int(bpdu['message']['id'], 16) < int(self.id, 16)):
@@ -126,19 +157,30 @@ class Bridge(object):
             print("Broadcasting message {} on all ports".format(id))
             self.broadcast(msg, exclude=[port])
 
+    def update_or_add_bridge(self, port):
+        with self.bridge_timers_lock:
+            if port in self.bridge_timers:
+                self.bridge_timers[port].restart()
+            else:
+                self.bridge_timers[port] = Timeout(self.expire_port(port), 0.75)
+
     def broadcast_bpdu(self):
         self.broadcast(self.build_bpdu())
+        return False
 
     def reset_root(self):
         self.root = self.id
         self.cost = self.root_port = 0
+        self.bridge_timers = {}
+        with self.router_lock:
+            self.router = {}
 
     def lookup_host(self, host):
-        with self.lans_lock:
+        with self.router_lock:
             return self.router.get(host)
 
     def set_host(self, host, port):
-        with self.lans_lock:
+        with self.router_lock:
             self.router[host] = port
 
 
