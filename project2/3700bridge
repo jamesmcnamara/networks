@@ -8,6 +8,7 @@ from socket import socket, AF_UNIX, SOCK_SEQPACKET
 from select import select
 from threading import Thread, Lock, Event
 
+
 class Timeout(Thread):
     def __init__(self, target, timer):
         Thread.__init__(self)
@@ -27,6 +28,7 @@ class Timeout(Thread):
             else:
                 self.target()
 
+
 def print_debug(msg, color="red"):
     color_codes = {"red": 31, 
                    "green": 32, 
@@ -38,9 +40,6 @@ def print_debug(msg, color="red"):
     CLEAR = "\\\e[0m"
     print(COLOR.format(color_codes[color]) + '[DEBUG] ' + msg + CLEAR)
 
-class Bridge(object):
-    def __init__(self, id, lans):
-        self.id = id
 
 class Bridge(object):
     def __init__(self, id, lans):
@@ -55,7 +54,7 @@ class Bridge(object):
         self.lans_lock = Lock()
         self.root_timeout = None
         self.bpdu_updater =  Timeout(self.broadcast_bpdu, 0.5)
-        
+
     def expire_root_port(self):
         self.reset_root()
         with self.lans_lock:
@@ -84,8 +83,9 @@ class Bridge(object):
                 self.process_bpdu(msg, port)
             else:
                 id = msg['message']['id']
-                if id in self.ids: #or port in self.blacklist:
-                    print("Not forwarding message {} from {} to {}".format(id, port, msg['dest']))
+                if id in self.ids or port in self.blacklist:
+                    print("Not forwarding message {} from {} to {}"
+                        .format(id, port, msg['dest']))
                     continue
                 self.ids.add(id)
                 self.forward_message(msg, port)
@@ -104,9 +104,9 @@ class Bridge(object):
             self.broadcast_bpdu()
             self.bpdu_updater.restart()
             self.blacklist = set()
-        elif bpdu_root == self.root and bpdu_cost == self.cost + 1:
-            pass
-        else:
+        elif (bpdu_root == self.root
+                and bpdu_cost == self.cost
+                and int(bpdu['message']['id'], 16) < int(self.id, 16)):
             self.blacklist.add(port)
 
     def forward_message(self, msg, port):
