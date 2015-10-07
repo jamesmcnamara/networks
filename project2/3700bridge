@@ -33,16 +33,16 @@ class Bridge(object):
         ready = select(self.lans.values(), [], [], 0)[0]
         for lan in ready:
             msg = json.loads(lan.recv(1500))
-            fd = lan.fileno()
+            port = lan.fileno()
             id = msg['message']['id']
-            if id in self.ids or fd in self.blacklist:
-                print("Not forwarding message {}".format(id))
+            if id in self.ids or port in self.blacklist:
+                print("Not forwarding message {} from {} to {}".format(id, port, msg['dest']))
                 continue
             self.ids.add(id)
             if msg['type'] == 'bpdu':
-                self.process_bpdu(msg, fd)
+                self.process_bpdu(msg, port)
             else:
-                self.forward_message(msg, fd)
+                self.forward_message(msg, port)
 
     def process_bpdu(self, bpdu, port):
         bpdu_root = bpdu['message']['root']
@@ -57,11 +57,14 @@ class Bridge(object):
     def forward_message(self, msg, port):
         id, port, src, dst = msg['message']['id'], port, msg['source'], msg['dest']
         print("Received message {} on port {} from {} to {}".format(id, port, src, dst))
-        if src not in self.router:
+        if src not in self.router or self.router[src] != port:
             print("Designated port: {}/{}".format(src, port))
             self.router[src] = port
         if dst in self.router:
             dst_port = self.lans[self.router[dst]].fileno()
+            if dst_port == port:
+                print("Not forwarding redundant packet {} on {}".format(id, port))
+                return
             print("Forwarding message {} to port {}".format(id, dst_port))
             self.send(dst_port, msg)
         else:
@@ -81,6 +84,7 @@ class Bridge(object):
         })
 
     def send(self, port, msg):
+        print("Sending on port {}".format(port))
         self.lans[port].sendall(json.dumps(msg))
 
     def broadcast(self, msg, exclude=None):
