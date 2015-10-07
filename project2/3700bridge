@@ -10,7 +10,7 @@ from select import select
 
 class Bridge(object):
     def __init__(self, id, lans):
-        self.id = int(id)
+        self.id = id
         self.lans = {port: lan for port, lan in map(self.create_socket, lans)}
         self.root = int(self.id, 16)
         self.cost = 0
@@ -45,14 +45,14 @@ class Bridge(object):
                 self.forward_message(msg, port)
 
     def process_bpdu(self, bpdu, port):
-        bpdu_root = bpdu['message']['root']
+        bpdu_root = int(bpdu['message']['root'], 16)
         bpdu_cost = bpdu['message']['cost']
         if bpdu_root < self.root or bpdu_root == self.root and bpdu_cost + 1 < self.cost:
             self.root = bpdu['message']['root']
             self.cost = int(bpdu['message']['cost']) + 1
             self.port = port
-            print("New root: {}/{}".format(hex(self.id), self.root))
-            print("Root port: {}/{}".format(hex(self.id), self.port))
+            print("New root: {}/{}".format(self.id, self.root))
+            print("Root port: {}/{}".format(self.id, self.port))
             self.broadcast_bpdu(reset=False)
         else:
             self.blacklist.add(port)
@@ -61,6 +61,7 @@ class Bridge(object):
         if reset:
             self.reset_root()
         bpdu = self.build_bpdu()
+        print("BPDU: ", bpdu)
         self.broadcast(bpdu)
 
     def reset_root(self):
@@ -85,16 +86,16 @@ class Bridge(object):
             self.broadcast(msg, exclude=[port])
 
     def build_bpdu(self):
-        return json.dumps({
+        return {
             'type': 'bpdu',
-            'source': hex(self.id),
+            'source': self.id,
             'dest': 'ffff',
             'message': {
                 'id': self.id,
                 'root': self.root,
                 'cost': self.cost
             }
-        })
+        }
 
     def send(self, port, msg):
         print("Sending on port {}".format(port))
