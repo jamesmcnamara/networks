@@ -10,7 +10,7 @@ from select import select
 
 class Bridge(object):
     def __init__(self, id, lans):
-        self.id = id
+        self.id = int(id)
         self.lans = {port: lan for port, lan in map(self.create_socket, lans)}
         self.root = int(self.id, 16)
         self.cost = 0
