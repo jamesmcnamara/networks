@@ -53,6 +53,19 @@ class Bridge(object):
             self.port = port
             print("New root: {}/{}".format(hex(self.id), self.root))
             print("Root port: {}/{}".format(hex(self.id), self.port))
+            self.broadcast_bpdu(reset=False)
+        else:
+            self.blacklist.add(port)
+
+    def broadcast_bpdu(self, reset=True):
+        if reset:
+            self.reset_root()
+        bpdu = self.build_bpdu()
+        self.broadcast(bpdu)
+
+    def reset_root(self):
+        self.root = self.id
+        self.cost = self.port = 0
 
     def forward_message(self, msg, port):
         id, port, src, dst = msg['message']['id'], port, msg['source'], msg['dest']
@@ -98,6 +111,7 @@ class Bridge(object):
 def main():
     id, lans = sys.argv[1], sys.argv[2:]
     bridge = Bridge(id, lans)
+    bridge.broadcast_bpdu()
     while True:
         bridge.check_network()
 
