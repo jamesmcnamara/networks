@@ -27,10 +27,16 @@ class Timeout(Thread):
             else:
                 self.target()
 
-def print_debug(msg):
-    RED = "\\\e[1;31m"
+def print_debug(msg, color="red"):
+    color_codes = {"red": 31, 
+                   "green": 32, 
+                   "yellow": 33, 
+                   "blue": 34, 
+                   "magenta": 35, 
+                   "cyan": 36}
+    COLOR = "\\\e[1;{}m"
     CLEAR = "\\\e[0m"
-    print(RED + '[DEBUG] ' + msg + CLEAR)
+    print(COLOR.format(color_codes[color]) + '[DEBUG] ' + msg + CLEAR)
 
 class Bridge(object):
     def __init__(self, id, lans):
@@ -48,7 +54,7 @@ class Bridge(object):
         self.blacklist = set()
         self.lans_lock = Lock()
         self.root_timeout = None
-        self.bpdu_updater = None #Timeout(self.broadcast_bpdu, 0.5)
+        self.bpdu_updater =  Timeout(self.broadcast_bpdu, 0.5)
         
     def expire_root_port(self):
         self.reset_root()
@@ -74,14 +80,14 @@ class Bridge(object):
         for lan in ready:
             msg = json.loads(lan.recv(1500))
             port = lan.fileno()
-            id = msg['message']['id']
-            if id in self.ids or port in self.blacklist:
-                print("Not forwarding message {} from {} to {}".format(id, port, msg['dest']))
-                continue
-            self.ids.add(id)
             if msg['type'] == 'bpdu':
                 self.process_bpdu(msg, port)
             else:
+                id = msg['message']['id']
+                if id in self.ids: #or port in self.blacklist:
+                    print("Not forwarding message {} from {} to {}".format(id, port, msg['dest']))
+                    continue
+                self.ids.add(id)
                 self.forward_message(msg, port)
 
     def process_bpdu(self, bpdu, port):
@@ -93,30 +99,15 @@ class Bridge(object):
             self.root = bpdu['message']['root']
             self.cost = int(bpdu['message']['cost']) + 1
             self.root_port = port
-            print_debug("New root: {}/{}".format(self.id, self.root))
+            print_debug("New root: {}/{}".format(self.id, self.root), color='green')
             print_debug("Root port: {}/{}".format(self.id, self.root_port))
             self.broadcast_bpdu()
             self.bpdu_updater.restart()
+            self.blacklist = set()
         elif bpdu_root == self.root and bpdu_cost == self.cost + 1:
             pass
         else:
             self.blacklist.add(port)
-
-    def broadcast_bpdu(self):
-        bpdu = self.build_bpdu()
-        self.broadcast(bpdu)
-
-    def reset_root(self):
-        self.root = self.id
-        self.cost = self.root_port = 0
-
-    def lookup_host(self, host):
-        with self.lans_lock:
-            return self.router.get(host)
-
-    def set_host(self, host, port):
-        with self.lans_lock:
-            self.router[host] = port
 
     def forward_message(self, msg, port):
         id, port, src, dst = msg['message']['id'], port, msg['source'], msg['dest']
@@ -135,6 +126,22 @@ class Bridge(object):
             print("Broadcasting message {} on all ports".format(id))
             self.broadcast(msg, exclude=[port])
 
+    def broadcast_bpdu(self):
+        self.broadcast(self.build_bpdu())
+
+    def reset_root(self):
+        self.root = self.id
+        self.cost = self.root_port = 0
+
+    def lookup_host(self, host):
+        with self.lans_lock:
+            return self.router.get(host)
+
+    def set_host(self, host, port):
+        with self.lans_lock:
+            self.router[host] = port
+
+
     def build_bpdu(self):
         return {
             'type': 'bpdu',
@@ -148,7 +155,6 @@ class Bridge(object):
         }
 
     def send(self, port, msg):
-        print("Sending on port {}".format(port))
         self.lans[port].sendall(json.dumps(msg))
 
     def broadcast(self, msg, exclude=None):
