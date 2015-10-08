@@ -4,94 +4,123 @@ from __future__ import print_function
 
 import json
 import sys
-from collections import defaultdict
 from socket import socket, AF_UNIX, SOCK_SEQPACKET
 from select import select
 from threading import Thread, Lock, Event
+from time import time
 
 
 class Timeout(Thread):
-    def __init__(self, target, timer):
-        Thread.__init__(self)
+    """ A Timeout object that executes a function on an interval, 
+        with the capability to skip executions 
+    """
+
+    def __init__(self, target, timer, once=False):
+        super(Timeout, self).__init__()
         self.target = target
         self.timer = timer
+        self.once = once
         self.event = Event()
         self.start()
 
     def restart(self):
+        """ Stops the target from being called this iteration """
         self.event.set()
 
     def run(self):
+        """ Sets a timeout clock and then calls the method infinitely """
         while True:
             self.event.wait(self.timer) 
+
+            # If the event was set during the timer, flip it back and continue
             if self.event.is_set():
                 self.event.clear()
             else:
-                if self.target():
-                    print_debug("returning", "cyan")
-                    break 
+                self.target()
+                if self.once:
+                    return
+                
 
 
-def print_debug(msg, color="red"):
-    color_codes = {"red": 31, 
-                   "green": 32, 
-                   "yellow": 33, 
-                   "blue": 34, 
-                   "magenta": 35, 
-                   "cyan": 36}
-    COLOR = "\\\e[1;{}m"
-    CLEAR = "\\\e[0m"
-    print(COLOR.format(color_codes[color]) + '[DEBUG] ' + msg + CLEAR)
+class ConcurrentSet(object):
+    """ Thread safe set wrapper """
 
-
-class Blacklist(object):
     def __init__(self):
         self.ports = set()
         self.lock = Lock()
+
+    def __getattr__(self, name):
+        """ Dispatch set calls to set, wrapped in a lock """
+        method = getattr(self.ports, name)
+        if callable(method):
+            def thread_safe_call(*args):
+                with self.lock:
+                    return method(*args)
+            return thread_safe_call
+        else:
+            return method
 
     def __contains__(self, port):
         with self.lock:
             return port in self.ports
     
-    def add(self, port):
-        with self.lock:
-            self.ports.add(port)
-
-    def reset(self):
-        with self.lock:
-            self.ports = set()
-
     def remove(self, port):
+        """ Atomic remove that ignores missing entries. This changes the 
+            semantics of the set API, but a check and then remove would
+            lead to race conditions 
+        """
         with self.lock:
             if port in self.ports:
                 self.ports.remove(port)
 
+
 class Bridge(object):
+    """ Bridge objects manage constructing spanning trees, learning host 
+        addresses, forwarding traffic, and maintaining the network 
+    """
+
     def __init__(self, id, lans):
+        print("Bridge {} starting up".format(id))
         self.id = id
+        
+        # lans maps "port numbers" (socket file descrips) to "ports" (sockets)
         self.lans = {port: lan for port, lan in map(self.create_socket, lans)}
+        
+        # bridge timers maps port numbers to Timeout objects
         self.bridge_timers = {}
         self.bridge_timers_lock = Lock()
         self.root = self.id
         self.cost = 0
         self.root_port = 0
+        
+        # Router maps host addresses to port numbers, and last times
         self.router = {}
-        self.ids = set()
-        self.blacklist = Blacklist()
         self.router_lock = Lock()
+        
+        # Message ids
+        self.ids = set()
+        
+        # ports who's data traffic should be ignored
+        self.blacklist = ConcurrentSet()
         self.root_timeout = None
         self.bpdu_updater =  Timeout(self.broadcast_bpdu, 0.5)
 
     def expire_port(self, port):
+        """ Creates a closure from the given port that when called will timeout
+            a BPDU, and takes the appropriate action to maintain the tree 
+        """
         def port_expire():
             with self.bridge_timers_lock:
+                # remove the port blacklist if it exists
                 self.blacklist.remove(port)
+
+                # If we're expiring the root port, flush everything
                 if port == self.root_port:
                     self.reset_root()
                 else:
+                    # Just remove them from the timeout list 
                     if port in self.bridge_timers:
                         self.bridge_timers.pop(port)
-            return True
         return port_expire
 
     @staticmethod
@@ -105,6 +134,9 @@ class Bridge(object):
         return s.fileno(), s
 
     def check_network(self):
+        """ Polls the sockets for messages, checks for duplicates and 
+            dispatches them for forwarding or BPDU processing as appropriate 
+        """
         ready = select(self.lans.values(), [], [], 0)[0]
         for lan in ready:
             msg = json.loads(lan.recv(1500))
@@ -115,60 +147,76 @@ class Bridge(object):
             else:
                 id = msg['message']['id']
                 if id in self.ids or port in self.blacklist:
-                    print("Not forwarding message {} from {} to {}"
-                        .format(id, port, msg['dest']))
+                    print("Not forwarding message {}".format(id))
                     continue
                 self.ids.add(id)
                 self.forward_message(msg, port)
 
     def process_bpdu(self, bpdu, port):
+        """ Determines if the root should be changed or if the given port 
+            should be disabled
+        """
         bpdu_root = int(bpdu['message']['root'], 16)
         bpdu_cost = bpdu['message']['cost']
+
+        # Check if we need to update our root or forwarding port
         if (bpdu_root < int(self.root, 16) or 
                 bpdu_root == self.root and 
                 bpdu_cost + 1 < self.cost):
             self.root = bpdu['message']['root']
             self.cost = int(bpdu['message']['cost']) + 1
             self.root_port = port
-            print_debug("New root: {}/{}".format(self.id, self.root), color='green')
-            print_debug("Root port: {}/{}".format(self.id, self.root_port))
+            print("New root: {}/{}".format(self.id, self.root))
+            print("Root port: {}/{}".format(self.id, self.root_port))
             self.broadcast_bpdu()
             self.bpdu_updater.restart()
-            self.blacklist.reset() 
+            self.blacklist.clear() 
+
+        # Check if we need to disable the port
         elif (bpdu_root == self.root
                 and bpdu_cost == self.cost
                 and int(bpdu['message']['id'], 16) < int(self.id, 16)):
+            print("Disabled port: {}/{}".format(self.id, port))
             self.blacklist.add(port)
 
     def forward_message(self, msg, port):
+        """ Forward the given data message to an end host. Either sends directly
+            if there is a fresh forwarding address in the table, or broadcasts
+        """
         id, port, src, dst = msg['message']['id'], port, msg['source'], msg['dest']
         print("Received message {} on port {} from {} to {}".format(id, port, src, dst))
         if self.lookup_host(src) != port:
             print("Designated port: {}/{}".format(src, port))
             self.set_host(src, port)
-        if self.lookup_host(dst):
-            dst_port = self.lans[self.lookup_host(dst)].fileno()
+
+        dst_port = self.lookup_host(dst)
+        if dst_port: 
             if dst_port == port:
-                print("Not forwarding redundant packet {} on {}".format(id, port))
-                return
-            print("Forwarding message {} to port {}".format(id, dst_port))
-            self.send(dst_port, msg)
+                print("Not forwarding message {}".format(id))
+            else:
+                print("Forwarding message {} to port {}".format(id, dst_port))
+                self.send(dst_port, msg)
         else:
-            print("Broadcasting message {} on all ports".format(id))
+            print("Broadcasting message {} to all ports".format(id))
             self.broadcast(msg, exclude=[port])
 
     def update_or_add_bridge(self, port):
+        """ Designate this port as a port where a bridge is accessable. If it
+            is already designated, restart its timer 
+        """
         with self.bridge_timers_lock:
             if port in self.bridge_timers:
                 self.bridge_timers[port].restart()
             else:
-                self.bridge_timers[port] = Timeout(self.expire_port(port), 0.75)
+                self.bridge_timers[port] = Timeout(self.expire_port(port), 
+                                                   0.75, once=True)
 
     def broadcast_bpdu(self):
+        """ Sends a BPDU port on all ports """
         self.broadcast(self.build_bpdu())
-        return False
 
     def reset_root(self):
+        """ Reset all spanning tree details """ 
         self.root = self.id
         self.cost = self.root_port = 0
         self.bridge_timers = {}
@@ -176,15 +224,24 @@ class Bridge(object):
             self.router = {}
 
     def lookup_host(self, host):
+        """ Look up the forwarding address for the given host """
         with self.router_lock:
-            return self.router.get(host)
+            if host in self.router:
+                port, last_time = self.router[host]
+                # If the entry is fresh, return the forwarding address 
+                if time() - last_time < 5:
+                    return port 
+                self.router.pop(host)
+        return None
 
     def set_host(self, host, port):
+        """ Set the forwarding address for the given host to the given port """
         with self.router_lock:
-            self.router[host] = port
+            self.router[host] = (port, time())
 
 
     def build_bpdu(self):
+        """ Constructs this bridges BPDU """
         return {
             'type': 'bpdu',
             'source': self.id,
@@ -197,11 +254,12 @@ class Bridge(object):
         }
 
     def send(self, port, msg):
+        """ Serializes the given message and sends it to the given port """
         self.lans[port].sendall(json.dumps(msg))
 
     def broadcast(self, msg, exclude=None):
-        if exclude is None:
-            exclude = []
+        """ Sends the given message to every port not in exclude """
+        exclude = exclude or []
         for port in self.lans:
             if port not in exclude:
                 self.send(port, msg)
