@@ -11,8 +11,8 @@ from time import time
 
 
 class Timeout(Thread):
-    """ A Timeout object that executes a function on an interval, 
-        with the capability to skip executions 
+    """ A Timeout object that executes a function on an interval,
+        with the capability to skip executions
     """
 
     def __init__(self, target, timer, once=False):
@@ -30,7 +30,7 @@ class Timeout(Thread):
     def run(self):
         """ Sets a timeout clock and then calls the method infinitely """
         while True:
-            self.event.wait(self.timer) 
+            self.event.wait(self.timer)
 
             # If the event was set during the timer, flip it back and continue
             if self.event.is_set():
@@ -39,7 +39,6 @@ class Timeout(Thread):
                 self.target()
                 if self.once:
                     return
-                
 
 
 class ConcurrentSet(object):
@@ -63,11 +62,11 @@ class ConcurrentSet(object):
     def __contains__(self, port):
         with self.lock:
             return port in self.ports
-    
+
     def remove(self, port):
-        """ Atomic remove that ignores missing entries. This changes the 
+        """ Atomic remove that ignores missing entries. This changes the
             semantics of the set API, but a check and then remove would
-            lead to race conditions 
+            lead to race conditions
         """
         with self.lock:
             if port in self.ports:
@@ -75,31 +74,31 @@ class ConcurrentSet(object):
 
 
 class Bridge(object):
-    """ Bridge objects manage constructing spanning trees, learning host 
-        addresses, forwarding traffic, and maintaining the network 
+    """ Bridge objects manage constructing spanning trees, learning host
+        addresses, forwarding traffic, and maintaining the network
     """
 
     def __init__(self, id, lans):
         print("Bridge {} starting up".format(id))
         self.id = id
-        
+
         # lans maps "port numbers" (socket file descrips) to "ports" (sockets)
         self.lans = {port: lan for port, lan in map(self.create_socket, lans)}
-        
+
         # bridge timers maps port numbers to Timeout objects
         self.bridge_timers = {}
         self.bridge_timers_lock = Lock()
         self.root = self.id
         self.cost = 0
         self.root_port = 0
-        
+
         # Router maps host addresses to port numbers, and last times
         self.router = {}
         self.router_lock = Lock()
-        
+
         # Message ids
         self.ids = set()
-        
+
         # ports who's data traffic should be ignored
         self.blacklist = ConcurrentSet()
         self.root_timeout = None
@@ -160,8 +159,8 @@ class Bridge(object):
         bpdu_cost = bpdu['message']['cost']
 
         # Check if we need to update our root or forwarding port
-        if (bpdu_root < int(self.root, 16) or 
-                bpdu_root == self.root and 
+        if (bpdu_root < int(self.root, 16) or
+                bpdu_root == self.root and
                 bpdu_cost + 1 < self.cost):
             self.root = bpdu['message']['root']
             self.cost = int(bpdu['message']['cost']) + 1
@@ -170,7 +169,7 @@ class Bridge(object):
             print("Root port: {}/{}".format(self.id, self.root_port))
             self.broadcast_bpdu()
             self.bpdu_updater.restart()
-            self.blacklist.clear() 
+            self.blacklist.clear()
 
         # Check if we need to disable the port
         elif (bpdu_root == self.root
@@ -202,13 +201,13 @@ class Bridge(object):
 
     def update_or_add_bridge(self, port):
         """ Designate this port as a port where a bridge is accessable. If it
-            is already designated, restart its timer 
+            is already designated, restart its timer
         """
         with self.bridge_timers_lock:
             if port in self.bridge_timers:
                 self.bridge_timers[port].restart()
             else:
-                self.bridge_timers[port] = Timeout(self.expire_port(port), 
+                self.bridge_timers[port] = Timeout(self.expire_port(port),
                                                    0.75, once=True)
 
     def broadcast_bpdu(self):
@@ -216,7 +215,7 @@ class Bridge(object):
         self.broadcast(self.build_bpdu())
 
     def reset_root(self):
-        """ Reset all spanning tree details """ 
+        """ Reset all spanning tree details """
         self.root = self.id
         self.cost = self.root_port = 0
         self.bridge_timers = {}
@@ -228,9 +227,9 @@ class Bridge(object):
         with self.router_lock:
             if host in self.router:
                 port, last_time = self.router[host]
-                # If the entry is fresh, return the forwarding address 
+                # If the entry is fresh, return the forwarding address
                 if time() - last_time < 5:
-                    return port 
+                    return port
                 self.router.pop(host)
         return None
 
