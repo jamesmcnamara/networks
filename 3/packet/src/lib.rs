@@ -8,7 +8,7 @@ impl Packet {
         Packet { id: id, payload: payload }
     }
 
-    fn encode(&self) -> Vec<u8> {
-        
+    fn encode(&self) -> Iterator<u8> {
+        return id.to_string().bytes().chain(self.
     }
 }
