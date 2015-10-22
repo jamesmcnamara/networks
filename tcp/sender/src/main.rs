@@ -3,7 +3,7 @@ extern crate packet;
 
 use itertools::Itertools;
 
-use packet::Packet;
+use packet::packet::Packet;
 
 use std::net::UdpSocket;
 use std::io::{Read, BufRead, BufReader, stdin};
