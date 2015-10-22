@@ -1,0 +1,10 @@
+[package]
+name = "sender"
+version = "0.1.0"
+authors = ["jamesmcnamara <jamesscottmcnamara@gmail.com>"]
+
+[dependencies]
+itertools = "0.4.1"
+
+[dependencies.packet]
+path= "../packet"

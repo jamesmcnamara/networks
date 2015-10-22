@@ -1,0 +1,4 @@
+[package]
+name = "recvr"
+version = "0.1.0"
+authors = ["jamesmcnamara <jamesscottmcnamara@gmail.com>"]

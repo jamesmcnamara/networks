@@ -151,9 +151,11 @@ fn parse_args() -> UserPrefs {
         let mut ap = ArgumentParser::new();
         ap.set_description("Solves mad math problems");
         ap.refer(&mut hostname)
-            .add_argument("hostname", Store, "Hostname to connect to").required();
+            .add_argument("hostname", Store, "Hostname to connect to")
+            .required();
         ap.refer(&mut nuid)
-            .add_argument("nuid", Store, "NUID to register").required();
+            .add_argument("nuid", Store, "NUID to register")
+            .required();
         ap.refer(&mut port)
             .add_option(&["-p", "--port"], Store, "Port to connect to");
         ap.refer(&mut secure)
