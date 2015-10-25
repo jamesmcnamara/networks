@@ -1,20 +1,34 @@
 use std::error::Error;
 use std::result;
 use std::fmt;
-
+use rustc_serialize::json::{EncoderError, DecoderError};
 
 #[derive(Debug)]
 pub enum PacketError {
-    HeaderCorrupted,
-    PayloadSizeError,
+    EncodeFailed(EncoderError),
+    DecodeFailed(DecoderError),
 }
 
 impl Error for PacketError {
     fn description(&self) -> &str {
         match *self {
-            PacketError::HeaderCorrupted  => "packet header corrupted",
-            PacketError::PayloadSizeError => "the payload is not the stated length",
+            PacketError::EncodeFailed(_) => 
+                "an error occured while serializing the packet",
+            PacketError::DecodeFailed(_) => 
+                "an error occured while deserializing the packet",
         }
+    }
+}
+
+impl From<EncoderError> for PacketError {
+    fn from(err: EncoderError) -> PacketError {
+        PacketError::EncodeFailed(err)   
+    }
+}
+
+impl From<DecoderError> for PacketError {
+    fn from(err: DecoderError) -> PacketError {
+        PacketError::DecodeFailed(err)   
     }
 }
 
