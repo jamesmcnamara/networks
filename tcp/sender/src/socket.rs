@@ -24,15 +24,16 @@ impl SendSock {
             println!("about to send a block");
             let payload: Vec<_> = byte_block.map(|x| x.unwrap()).collect();
             let len = payload.len() as u64;
-            self.send_packet(Packet::new(self.acked, 
-                                         Flag::Data(len), 
+            println!("sending packet with {} and len: {}", self.acked, len);
+            self.send_packet(Packet::new(Flag::Data(self.acked), 
                                          payload));
+            println!("Packet acked continuing");
             self.acked += len;
         }
     }
   
     fn send_packet(&self, packet: Packet) {
-        let expected_ack = self.acked + packet.len() as u64;
+        let expected_ack = self.acked + packet.len();
         let borr_other: &str = &(self.other);
         let message = packet.encode().into_bytes();
         println!("message length is {}", message.len());
@@ -42,8 +43,10 @@ impl SendSock {
         select! {
            ack = ack_chan.recv() => { 
                if ack.unwrap() != expected_ack {
+                   println!("retransmit");
                     self.send_packet(packet);
                }
+               println!("acked!");
            },
            _ = timer.recv() => self.send_packet(packet)
         }
@@ -64,14 +67,16 @@ impl RecvSock {
         loop {
             println!("starting a recv loop");
             let mut payload = [0u8; 32768];
-            if let Err(e) = self.inner.recv_from(&mut payload) {
-                println!("errr {:?}", e);
-                continue;
-            }
+            let n = match self.inner.recv_from(&mut payload) {
+                Ok((n, _))  => n,
+                Err(e) => continue,
+            };
+            let payload = &payload[0..n];
             if let Ok(pack) = String::from_utf8(payload.to_vec()) {
                 let packet = Packet::decode(&pack).unwrap();
                 match packet.flag {
                     Flag::Data(seq) => {
+                        println!("received packet with seq {} and my ack is: {}", seq, self.acked);
                         if self.acked == seq {
                             self.acked += packet.len();
                             println!("{}", packet.body());
@@ -86,7 +91,7 @@ impl RecvSock {
     }
     
     fn ack(&self) {
-        let ack = Packet::new(self.acked, Flag::Ack(self.acked), vec![]);
+        let ack = Packet::new(Flag::Ack(self.acked), vec![]);
         let borr_other: &str = &(self.other);
         if let Err(_) = self.inner.send_to(ack.encode().as_bytes(), borr_other) {
             self.ack();
@@ -103,14 +108,14 @@ pub fn open_connection(addr: &str, other: &str) -> (SendSock, RecvSock) {
     let send_sock = SendSock {
         inner: sender,
         other: other.to_string(),
-        acked: 0,
+        acked: 212,
         ack_chan: rx,
         timeout_ms: 30000
     };
     let recv_sock = RecvSock {
         inner: recvr,
         other: other.to_string(),
-        acked: 0,
+        acked: 212,
         ack_chan: sx,
         buffer: vec![],
     };
