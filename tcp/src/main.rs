@@ -1,27 +1,24 @@
-#![feature(slice_patterns)]
+#![feature(convert)]
 #![feature(mpsc_select)]
+#![feature(slice_patterns)]
 extern crate itertools;
-extern crate packet;
 extern crate schedule_recv;
+extern crate rustc_serialize;
 
-use itertools::Itertools;
-
-use packet::packet::Packet;
-
-use std::net::UdpSocket;
-use std::io::{Read, BufRead, BufReader, stdin};
+use std::io::{Read, BufReader, stdin};
 use std::thread;
 use std::env;
 
 pub mod socket;
+pub mod packet;
 
 fn main() {
-    let mut stdin_bytes = BufReader::new(stdin()).bytes();
+    let stdin_bytes = BufReader::new(stdin()).bytes();
     let (host, dest) = match &env::args().skip(1).collect::<Vec<_>>()[..] {
         [ref host, ref dest, ..] => (host.to_string(), dest.to_string()),
         _            => panic!("Must pass parameters of host and destination"),
     };
     let (mut sender, mut recvr) = socket::open_connection(&host, &dest); 
-    let _ = thread::spawn(move|| { sender.send(stdin_bytes) });
+    thread::spawn(move || sender.send(stdin_bytes));
     recvr.recv();
 }

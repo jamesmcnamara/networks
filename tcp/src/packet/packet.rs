@@ -1,17 +1,19 @@
-use error::{Result, PacketError};
+use std::hash::{Hash, Hasher, SipHasher};
+
+use packet::{Result, PacketError};
 use rustc_serialize::json;
 
 #[derive(PartialEq, Debug, RustcEncodable, RustcDecodable)]
 pub enum Flag {
     Data(u64),
     Ack(u64),
-    Fin,
 }
 
 
 #[derive(PartialEq, Debug, RustcEncodable, RustcDecodable)]
 pub struct Packet {
     pub flag: Flag,
+    hash: u64,
     payload: Vec<u8>,
 }
 
@@ -19,6 +21,7 @@ impl Packet {
     pub fn new(flag: Flag, payload: Vec<u8>) -> Packet {
         Packet {
             flag: flag,
+            hash: Packet::hash_payload(&payload),
             payload: payload
         }
     }
@@ -27,8 +30,19 @@ impl Packet {
         json::encode(self).unwrap()
     }
 
+    pub fn hash_payload(payload: &[u8]) -> u64 {
+        let mut hasher = SipHasher::new();
+        payload.hash(&mut hasher);
+        hasher.finish()
+    }
+
     pub fn decode(data: &str) -> Result<Packet> {
-        Ok(try!(json::decode(data)))
+        let packet: Packet = try!(json::decode(data));
+        if packet.hash != Packet::hash_payload(&packet.payload) {
+            Err(PacketError::PayloadCorrupted)
+        } else {
+            Ok(packet)
+        }
     }
     
     pub fn len(&self) -> u64 {

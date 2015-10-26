@@ -7,15 +7,18 @@ use rustc_serialize::json::{EncoderError, DecoderError};
 pub enum PacketError {
     EncodeFailed(EncoderError),
     DecodeFailed(DecoderError),
+    PayloadCorrupted,
 }
 
 impl Error for PacketError {
     fn description(&self) -> &str {
         match *self {
-            PacketError::EncodeFailed(_) => 
+            PacketError::EncodeFailed(_)  => 
                 "an error occured while serializing the packet",
-            PacketError::DecodeFailed(_) => 
+            PacketError::DecodeFailed(_)  => 
                 "an error occured while deserializing the packet",
+            PacketError::PayloadCorrupted =>
+                "The hash of the payload did not match the provided hash",
         }
     }
 }
