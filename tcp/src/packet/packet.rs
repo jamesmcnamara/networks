@@ -1,16 +1,19 @@
 use std::hash::{Hash, Hasher, SipHasher};
+use std::slice::Iter;
 
 use packet::{Result, PacketError};
 use rustc_serialize::json;
 
-#[derive(PartialEq, Debug, RustcEncodable, RustcDecodable)]
+#[derive(PartialEq, Debug, RustcEncodable, RustcDecodable, Clone)]
 pub enum Flag {
     Data(u64),
     Ack(u64),
+    SyncReq(u64),
+    Fin(u64),
 }
 
 
-#[derive(PartialEq, Debug, RustcEncodable, RustcDecodable)]
+#[derive(PartialEq, Debug, RustcEncodable, RustcDecodable, Clone)]
 pub struct Packet {
     pub flag: Flag,
     hash: u64,
@@ -27,7 +30,10 @@ impl Packet {
     }
     
     pub fn encode(&self) -> String {
-        json::encode(self).unwrap()
+        match json::encode(self) {
+            Ok(s)  => s,
+            Err(e) => panic!("packed decode failed: {}", e),
+        }
     }
 
     pub fn hash_payload(payload: &[u8]) -> u64 {
@@ -53,10 +59,16 @@ impl Packet {
         String::from_utf8(self.payload.clone()).unwrap()
     }
 
+    pub fn payload<'pkt>(&'pkt self) -> Iter<'pkt, u8> {
+        self.payload.iter()
+    }
+
     pub fn seq(&self) -> u64 {
         match self.flag {
-            Flag::Data(seq) => seq,
-            Flag::Ack(seq)  => seq,
+            Flag::Data(seq)    => seq,
+            Flag::Ack(seq)     => seq,
+            Flag::SyncReq(seq) => seq,
+            Flag::Fin(seq)     => seq,
         }
     }
 }

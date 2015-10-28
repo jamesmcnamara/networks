@@ -10,6 +10,12 @@ pub mod recv;
 use std::net::UdpSocket;
 use std::sync::mpsc;
 
+pub enum Msg {
+    Ack(u64),
+    Fin(u64),
+    SyncReq(u64, Vec<u64>),
+}
+
 /// Opens a connection between `addr` and `dest` and returns a 
 /// `SendSock` and `RecvSock` pair, which will manage reliable transfer
 pub fn open_connection(addr: &str, dest: &str) -> (SendSock, RecvSock) {
