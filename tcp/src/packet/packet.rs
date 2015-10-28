@@ -52,6 +52,13 @@ impl Packet {
     pub fn body(&self) -> String {
         String::from_utf8(self.payload.clone()).unwrap()
     }
+
+    pub fn seq(&self) -> u64 {
+        match self.flag {
+            Flag::Data(seq) => seq,
+            Flag::Ack(seq)  => seq,
+        }
+    }
 }
 
 #[test]

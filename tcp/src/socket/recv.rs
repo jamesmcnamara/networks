@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+use std::cmp::Ordering;
+use std::io::Write;
+use std::mem;
 use std::net::UdpSocket;
 use std::sync::mpsc;
 
@@ -11,7 +15,7 @@ pub struct RecvSock {
     dest: String,
     acked: u64,
     ack_chan: mpsc::Sender<u64>,
-    buffer: Vec<Packet>
+    buffer: BTreeMap<u64, Packet>
 }
 
 /// Public constructor defined outside of the Impl so that the 
@@ -24,7 +28,7 @@ pub fn make_recv_sock(inner: UdpSocket, dest: &str,
         dest: dest.to_string(),
         acked: 212,
         ack_chan: ack_chan,
-        buffer: vec![],
+        buffer: BTreeMap::new()
     }
 }
 
@@ -37,9 +41,8 @@ impl RecvSock {
             let mut payload = [0u8; 32768];
             let len = match self.inner.recv_from(&mut payload) {
                 Ok((n, _))  => n,
-                Err(e) => {println!("{}", e); continue;},
+                Err(e) => {log!("{}", e); continue;},
             };
-            println!("bytes read: {}", len);
             if let Ok(pack) = String::from_utf8((&payload[0..len]).to_vec()) {
                 self.process_message(pack);
             }
@@ -52,10 +55,21 @@ impl RecvSock {
         if let Ok(packet) = Packet::decode(&json) {
             match packet.flag {
                 Flag::Data(seq) => {
-                    if seq == self.acked {
-                        self.acked += packet.len();
-                        println!("{}", packet.body());
-                    }
+                    let len = packet.len();
+                    let status = match seq.cmp(&self.acked) {
+                        Ordering::Less    => "IGNORED",
+                        Ordering::Equal   => {
+                            self.acked += packet.len();
+                            self.read_buffer();
+                            "ACCEPTED (in-order)"
+                        },
+                        Ordering::Greater => {
+                            self.buffer.insert(seq, packet);
+                            "ACCEPTED (out-of-order)"
+                        }
+                    };
+
+                    log!("[recv data] {} ({}) {} {}", seq, len, status, self.buffer.len());
                     self.ack();
                 }
                 Flag::Ack(n) => {
@@ -63,6 +77,20 @@ impl RecvSock {
                 },
             }
         }
+    }
+    
+    fn read_buffer(&mut self) {
+        let buffer = mem::replace(&mut self.buffer, BTreeMap::new());
+        for (seq, packet) in buffer {
+            if seq == self.acked {
+                self.acked += packet.len();
+                println!("{}", packet.body());
+                log!("[served from buffer] {}", packet.seq());
+            } else {
+                self.buffer.insert(seq, packet);
+            }
+        }
+
     }
 
     /// Transmits an ack of the current bytes fully read. Continuously 
