@@ -83,6 +83,7 @@ impl RecvSock {
             Ordering::Less    => "IGNORED",
             Ordering::Equal   => {
                 self.acked += packet.len();
+                println!("{}", packet.body());
                 self.read_buffer();
                 "ACCEPTED (in-order)"
             },
