@@ -64,11 +64,14 @@ impl RecvSock {
             match packet.flag {
                 Flag::Data(_) =>  self.process_new_data(packet),
                 Flag::Ack(n)  => {
-                    self.msg_chan.send(Msg::Ack(n))
-                        .ok().expect("sender hung up");},
+                    self.acked = n;
+                    self.msg_chan.send(Msg::Ack(n)).ok()
+                        .expect("sender hung up");
+                },
                 Flag::Fin(n)  => {
+                    drop(self.msg_chan.send(Msg::Fin(n)));
+                    log!("Received fin m:{} t:{}", self.acked, n);
                     if n == self.acked {
-                        drop(self.msg_chan.send(Msg::Fin(n)));
                         self.fin();
                         self.closed = true;
                         log!("[completed] {}", self.acked)
@@ -126,6 +129,7 @@ impl RecvSock {
     }
    
     fn send_packet(&self, packet: Packet) {
+        log!("acking {}", self.acked);
         if let Err(e) = 
             self.inner.send_to(packet.encode().as_bytes(), 
                                self.dest.expect("No destination defined")) {

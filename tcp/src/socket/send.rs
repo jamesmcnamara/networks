@@ -74,7 +74,7 @@ impl SendSock {
                         }
                     },
                     None      => {
-                        if self.outstanding.len() <= 0 {
+                        if self.outstanding.len() > 0 {
                             break; 
                         }
                         return self.close();
@@ -85,6 +85,7 @@ impl SendSock {
     }
     
     fn close(&self) {
+        log!("closing {}", self.acked);
         let fin = Packet::new(Flag::Fin(self.acked), vec![]);
         self.send_packet(&fin);
         let timer = oneshot_ms(self.timeout_ms);
@@ -176,7 +177,7 @@ impl SendSock {
     /// Sends a packet to the sockets destination. Ensures that the packet at
     /// least gets onto the wire 
     fn send_packet(&self, packet: &Packet) {
-        log!("[send data] {} ({})", packet.seq(), packet.len());
+        log!("[send data] {} ({}), ={}=", packet.seq(), packet.len(), self.acked);
         if let Err(e) = self.inner.send_to(&packet.encode().into_bytes(), 
                                            self.dest.as_str()) {
             log!("send failed: {}", e);
