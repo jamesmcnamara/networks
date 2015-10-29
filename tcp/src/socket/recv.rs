@@ -67,15 +67,17 @@ impl RecvSock {
                     self.msg_chan.send(Msg::Ack(n))
                         .ok().expect("sender hung up");},
                 Flag::Fin(n)  => {
-                    drop(self.msg_chan.send(Msg::Fin(n)));
-                    self.fin();
-                    self.closed = true;
-                    log!("[completed] {}", self.acked)
+                    if n == self.acked {
+                        drop(self.msg_chan.send(Msg::Fin(n)));
+                        self.fin();
+                        self.closed = true;
+                        log!("[completed] {}", self.acked)
+                    }
                 },
             }
         }
     }
-   
+
     fn process_new_data(&mut self, packet: Packet) {
         let seq = packet.seq();
         let len = packet.len();

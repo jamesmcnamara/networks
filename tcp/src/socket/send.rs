@@ -38,7 +38,7 @@ pub fn make_send_sock(inner: UdpSocket, dest: &str,
         dup_acks: 0,
         outstanding: vec![],
         limit: 8,
-        timeout_ms: 3000,
+        timeout_ms: 30000,
         retransmit: false,
     }
 }
@@ -54,8 +54,8 @@ impl SendSock {
             // If acks were received, update the buffer and acks,
             // or count the duplicates
             let msgs = self.collect_messages();
-            if let Some(ack) = self.calc_ack(msgs) {
-                self.handle_ack(ack);
+            if let Some((ack, n)) = self.calc_ack(msgs) {
+                self.handle_acks(ack, n);
             }
 
             // If we saw 3 duplicate acks or a timeout, retransmit 
@@ -141,16 +141,21 @@ impl SendSock {
         msgs
     }
 
-    fn calc_ack(&self, msgs: Vec<Msg>) -> Option<u64> {
-       msgs.iter().filter_map(|msg| {
+    fn calc_ack(&self, msgs: Vec<Msg>) -> Option<(u64, usize)> {
+       let acks: Vec<_> = msgs.iter().filter_map(|msg| {
             match *msg {
                 Msg::Ack(n)            =>  Some(n),
                 Msg::Fin(_)            =>  None,
             }
-        }).max()
+        }).collect();
+
+       acks.iter()
+           .max()
+           .and_then(|&max| 
+                     Some((max, acks.iter().filter(|&&n| n == max).count())))
     }
 
-    fn handle_ack(&mut self, ack: u64) {
+    fn handle_acks(&mut self, ack: u64, count: usize) {
         log!("[recv ack] {}", self.acked);
         if ack > self.acked {
             self.outstanding.retain(|p| p.seq() >= ack);
@@ -159,9 +164,9 @@ impl SendSock {
                 self.limit *= 2;
             }
             self.acked = ack;
-            self.dup_acks = 0;
+            self.dup_acks = count;
         } else {
-            self.dup_acks + 1;
+            self.dup_acks += count;
         }
 
         // 3 or more duplicate acks in a row trigger retransmission
