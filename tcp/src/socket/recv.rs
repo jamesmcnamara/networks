@@ -46,7 +46,7 @@ impl RecvSock {
             let mut payload = [0u8; 32768];
             let (len, addr) = match self.inner.recv_from(&mut payload) {
                 Ok((n, addr))  => (n, addr),
-                Err(e) => {log!("{}", e); continue;},
+                Err(e) => {log!("recv error: {}", e); continue;},
             };
             if let None = self.dest {
                 self.dest = Some(addr);
@@ -70,7 +70,7 @@ impl RecvSock {
                     drop(self.msg_chan.send(Msg::Fin(n)));
                     self.fin();
                     self.closed = true;
-                    log!("[completed] {}", self.acked())
+                    log!("[completed] {}", self.acked)
                 },
             }
         }
@@ -92,7 +92,7 @@ impl RecvSock {
             }
         };
 
-        log!("[recv data] {} ({}) {} {}", seq, len, status, self.buffer.len());
+        log!("[recv data] {} ({}) {}", seq, len, status);
         self.ack();
     }
 

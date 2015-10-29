@@ -57,7 +57,7 @@ impl SendSock {
             if let Some(ack) = self.calc_ack(msgs) {
                 self.handle_ack(ack);
             }
-            
+
             // If we saw 3 duplicate acks or a timeout, retransmit 
             // and update counters
             if self.retransmit {
@@ -171,7 +171,7 @@ impl SendSock {
     /// Sends a packet to the sockets destination. Ensures that the packet at
     /// least gets onto the wire 
     fn send_packet(&self, packet: &Packet) {
-        log!("[send data] {} ({}) ={}=", packet.seq(), packet.len(), self.acked);
+        log!("[send data] {} ({})", packet.seq(), packet.len());
         if let Err(e) = self.inner.send_to(&packet.encode().into_bytes(), 
                                            self.dest.as_str()) {
             log!("send failed: {}", e);
