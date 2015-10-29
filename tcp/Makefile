@@ -1,4 +1,4 @@
 run: 
-	cargo build
-	mv target/debug/sender sender
+	cargo build --release
+	cp target/release/sender sender
 	cp sender recvr

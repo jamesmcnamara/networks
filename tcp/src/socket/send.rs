@@ -1,12 +1,12 @@
-use std::collections::BTreeSet;
+use std::cmp;
 use std::io::{Bytes, Read, Write};
-use std::iter::FromIterator;
+use std::mem;
 use std::net::UdpSocket;
 use std::sync::mpsc;
+use std::vec;
 
 use itertools::Itertools;
 use schedule_recv::oneshot_ms;
-use time;
 
 use packet::{Packet, Flag}; 
 use super::Msg;
@@ -15,13 +15,12 @@ pub struct SendSock {
     inner: UdpSocket,
     dest: String,
     acked: u64,
-    seq: u64,
     msg_chan: mpsc::Receiver<Msg>,
     dup_acks: usize,
+    goodput: usize,
     outstanding: Vec<Packet>,
     limit: usize,
     timeout_ms: u32,
-    last_sync: time::Tm,
     retransmit: bool
 }
 
@@ -33,14 +32,13 @@ pub fn make_send_sock(inner: UdpSocket, dest: &str,
     SendSock {
         inner: inner,
         dest: dest.to_string(),
-        acked: 212,
-        seq: 212,
+        acked: 0,
         msg_chan: msg_chan,
+        goodput: 0,
         dup_acks: 0,
         outstanding: vec![],
-        limit: 100,
+        limit: 8,
         timeout_ms: 3000,
-        last_sync: time::now(),
         retransmit: false,
     }
 }
@@ -48,49 +46,83 @@ pub fn make_send_sock(inner: UdpSocket, dest: &str,
 
 impl SendSock {
 
-    /// Packetizes the given byte stream and transmits it to the dest
-    pub fn send<R: Read>(&mut self, bytes: Bytes<R>) {
-        let bytes = bytes.map(|b| b.unwrap()).into_iter().chunks_lazy(2048);
-        let mut packet_stream = bytes.into_iter();
+    /// Packetizes the given byte stream and transmits it to the dest.
+    /// Guarantees delivery of the entire message
+    pub fn send<R: Read>(mut self, bytes: Bytes<R>) {
+        let mut packet_stream = self.packetize_stream(bytes).into_iter();
         loop {
-            let msgs = self.receive_messages();
-            let (ack, count) = self.process_messages(msgs);
-
             // If acks were received, update the buffer and acks,
             // or count the duplicates
-            self.handle_acks(ack, count);
+            let msgs = self.collect_messages();
+            if let Some(ack) = self.calc_ack(msgs) {
+                self.handle_ack(ack);
+            }
             
+            // If we saw 3 duplicate acks or a timeout, retransmit 
+            // and update counters
+            if self.retransmit {
+                packet_stream = self.retransmit(packet_stream);
+            }
+
+            // Else transmit as much as possible
             while self.outstanding.len() < self.limit { 
-                if self.retransmit {
-                    let slack = self.limit - self.outstanding.len();
-                    let dup_packets = (&self.outstanding[0..slack])
-                        .iter()
-                        .cloned()
-                        .collect_vec();
-                    for packet in dup_packets { 
-                        self.outstanding.push(packet);
-                        self.send_packet(self.outstanding.last().unwrap());
-                    }
-                } else {
-                    match packet_stream.next() {
-                        Some(block) => {
-                            self.packetize_block(block.collect());
+                match packet_stream.next() {
+                    Some(packet) => {
+                        if packet.seq() >= self.acked {
+                            self.outstanding.push(packet);
                             self.send_packet(self.outstanding.last().unwrap())
                         }
-                        None      => return,
-                    }
+                    },
+                    None      => {
+                        if self.outstanding.len() <= 0 {
+                            break; 
+                        }
+                        return self.close();
+                    }, 
                 }
             }
         }
     }
-
-    fn packetize_block(&mut self, payload: Vec<u8>) {
-        self.outstanding.push(Packet::new(Flag::Data(self.seq), payload));
-        let packet = self.outstanding.last().unwrap();
-        self.seq += packet.len();
+    
+    fn close(&self) {
+        let fin = Packet::new(Flag::Fin(self.acked), vec![]);
+        self.send_packet(&fin);
+        let timer = oneshot_ms(self.timeout_ms);
+        let ref msg_chan = self.msg_chan;
+        select! {
+           msg = msg_chan.recv() => { match msg {
+               Ok(Msg::Fin(_)) => log!("[completed] {}",  self.acked), 
+               _               => self.close()
+           }},
+           _   = timer.recv()  => self.close()
+        }
     }
 
-    fn receive_messages(&mut self) -> Vec<Msg> {
+    fn retransmit(&mut self, packet_stream: vec::IntoIter<Packet>) -> vec::IntoIter<Packet> {
+        self.retransmit = false;
+        self.limit = cmp::max(self.limit / 2, 1);
+        self.dup_acks = 0;
+        self.goodput = 0;
+
+        let mut packets = mem::replace(&mut self.outstanding, vec![]);
+        packets.extend(packet_stream);
+        packets.into_iter()
+    }
+
+    fn packetize_stream<R: Read>(&self, bytes: Bytes<R>) -> Vec<Packet> {
+        let block_size = 2048;
+        bytes.map(|b| b.ok().expect("byte decoding error"))
+            .into_iter()
+            .chunks_lazy(block_size)
+            .into_iter()
+            .enumerate()
+            .map(|(i, block)| 
+                 Packet::new(Flag::Data(self.acked + (i * block_size) as u64), 
+                             block.collect()))
+            .collect()
+    }
+
+    fn collect_messages(&mut self) -> Vec<Msg> {
         let mut msgs: Vec<Msg> = vec![];
         if self.outstanding.len() == self.limit {
             // Wait for an ack or a timeout. Separate assignments are required
@@ -98,7 +130,7 @@ impl SendSock {
             let timer = oneshot_ms(self.timeout_ms);
             let ref msg_chan = self.msg_chan;
             select! {
-               msg = msg_chan.recv() => {msgs.push(msg.unwrap())}, 
+               msg = msg_chan.recv() => {msgs.push(msg.ok().expect("msg receive"))}, 
                _   = timer.recv()    => {self.retransmit = true}
             }
         }
@@ -109,66 +141,41 @@ impl SendSock {
         msgs
     }
 
-    fn process_messages(&mut self, msgs: Vec<Msg>) -> (u64, usize) {
-        let acks: Vec<u64> = msgs.iter().filter_map(|msg| {
+    fn calc_ack(&self, msgs: Vec<Msg>) -> Option<u64> {
+       msgs.iter().filter_map(|msg| {
             match *msg {
                 Msg::Ack(n)            =>  Some(n),
-                Msg::SyncReq(n, ref v) => {self.sync(n, v); None},
                 Msg::Fin(_)            =>  None,
             }
-        })
-        .collect();
-
-        match acks.iter().max() {
-            Some(&max) => 
-                (max, acks.iter().fold(0, |count, &x| count + (x == max) as usize)),
-            None       => (0, 0),
-        }
+        }).max()
     }
 
-    fn handle_acks(&mut self, ack: u64, count: usize) {
-        if count > 0 {
-            if ack > self.acked {
-                self.outstanding.retain(|p| p.seq() >= ack);
-                self.acked = ack;
-                self.dup_acks = 0;
-                self.retransmit = false;
-            } else {
-                self.dup_acks += count;
+    fn handle_ack(&mut self, ack: u64) {
+        log!("[recv ack] {}", self.acked);
+        if ack > self.acked {
+            self.outstanding.retain(|p| p.seq() >= ack);
+            self.goodput += self.limit - self.outstanding.len();
+            if self.goodput == self.limit {
+                self.limit *= 2;
             }
-            log!("[recv ack] {}", self.acked);
-
-            // 3 or more duplicate acks in a row trigger retransmission
-            if count > 2 || self.dup_acks > 2 { 
-                self.retransmit = true;
-                self.dup_acks = 0;
-            }
+            self.acked = ack;
+            self.dup_acks = 0;
+        } else {
+            self.dup_acks + 1;
         }
-    }
 
+        // 3 or more duplicate acks in a row trigger retransmission
+        self.retransmit = self.dup_acks > 2;
+    }
+    
     /// Sends a packet to the sockets destination. Ensures that the packet at
     /// least gets onto the wire 
     fn send_packet(&self, packet: &Packet) {
-        log!("[send data] {} ({}) ={}= {}", 
-             packet.seq(), packet.len(), self.acked, self.outstanding.len());
+        log!("[send data] {} ({}) ={}=", packet.seq(), packet.len(), self.acked);
         if let Err(e) = self.inner.send_to(&packet.encode().into_bytes(), 
                                            self.dest.as_str()) {
             log!("send failed: {}", e);
             self.send_packet(packet);
-        }
-    }
-
-    fn sync(&mut self, acked: u64, recvrs_buffer: &[u64]) {
-        let three_seconds = time::Duration::seconds(3);
-        if (time::now() - three_seconds) > self.last_sync { 
-            let recvrs_buffer = BTreeSet::from_iter(recvrs_buffer.iter());
-            self.outstanding
-                .retain(|p| p.seq() >= acked && !recvrs_buffer.contains(&p.seq()));
-
-            for packet in &self.outstanding {
-                log!("[retransmitting from sync] {}", packet.seq());
-                self.send_packet(packet);
-            }
         }
     }
 }

@@ -8,7 +8,6 @@ use rustc_serialize::json;
 pub enum Flag {
     Data(u64),
     Ack(u64),
-    SyncReq(u64),
     Fin(u64),
 }
 
@@ -32,7 +31,7 @@ impl Packet {
     pub fn encode(&self) -> String {
         match json::encode(self) {
             Ok(s)  => s,
-            Err(e) => panic!("packed decode failed: {}", e),
+            Err(e) => panic!("packet decode failed: {}", e),
         }
     }
 
@@ -67,7 +66,6 @@ impl Packet {
         match self.flag {
             Flag::Data(seq)    => seq,
             Flag::Ack(seq)     => seq,
-            Flag::SyncReq(seq) => seq,
             Flag::Fin(seq)     => seq,
         }
     }
