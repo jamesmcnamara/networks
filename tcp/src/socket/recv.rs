@@ -83,7 +83,7 @@ impl RecvSock {
             Ordering::Less    => "IGNORED",
             Ordering::Equal   => {
                 self.acked += packet.len();
-                println!("{}", packet.body());
+                print!("{}", packet.body());
                 self.read_buffer();
                 "ACCEPTED (in-order)"
             },
@@ -103,7 +103,7 @@ impl RecvSock {
         for (seq, packet) in buffer {
             if seq == self.acked {
                 self.acked += packet.len();
-                println!("{}", packet.body());
+                print!("{}", packet.body());
             } else {
                 self.buffer.insert(seq, packet);
             }
