@@ -99,6 +99,37 @@ impl SendSock {
                              block.collect()))
             .collect()
     }
+
+    /// Concatenates all of the outstanding messages onto the packet stream
+    /// and shortens the window of allowed outstanding buffers
+    fn retransmit(&mut self, packet_stream: vec::IntoIter<Packet>) -> vec::IntoIter<Packet> {
+        self.retransmit = false;
+        self.limit = cmp::max((self.limit * 3) / 4, 1) as usize;
+        self.dup_acks = 0;
+        self.goodput = 0;
+
+        let mut packets = mem::replace(&mut self.outstanding, vec![]);
+        packets.extend(packet_stream);
+        packets.into_iter()
+    }
+
+    /// Transmit as much as possible, and determine if we should continue
+    /// looping or not
+    fn transmit(&mut self, packets: &mut vec::IntoIter<Packet>) -> bool {
+        while self.outstanding.len() < self.limit { 
+            match packets.next() {
+                Some(packet) => {
+                    if packet.seq() >= self.acked {
+                        self.outstanding.push(packet);
+                        self.send_packet(self.outstanding.last().unwrap())
+                    }
+                },
+                None      => { return self.outstanding.len() > 0; },
+            }
+        }
+        true
+    }
+    
     
     /// Blocks until it receives a message from the receiver socket or a timeout
     /// fires (in which case it flags the socket to begin retransmission). Then
@@ -159,36 +190,6 @@ impl SendSock {
         self.retransmit = self.dup_acks > 2;
     }
 
-    /// Concatenates all of the outstanding messages onto the packet stream
-    /// and shortens the window of allowed outstanding buffers
-    fn retransmit(&mut self, packet_stream: vec::IntoIter<Packet>) -> vec::IntoIter<Packet> {
-        self.retransmit = false;
-        self.limit = cmp::max((self.limit * 3) / 4, 1) as usize;
-        self.dup_acks = 0;
-        self.goodput = 0;
-
-        let mut packets = mem::replace(&mut self.outstanding, vec![]);
-        packets.extend(packet_stream);
-        packets.into_iter()
-    }
-
-    /// Transmit as much as possible, and determine if we should continue
-    /// looping or not
-    fn transmit(&mut self, packets: &mut vec::IntoIter<Packet>) -> bool {
-        while self.outstanding.len() < self.limit { 
-            match packets.next() {
-                Some(packet) => {
-                    if packet.seq() >= self.acked {
-                        self.outstanding.push(packet);
-                        self.send_packet(self.outstanding.last().unwrap())
-                    }
-                },
-                None      => { return self.outstanding.len() > 0; },
-            }
-        }
-        true
-    }
-    
     /// Sends a packet to the sockets destination. Ensures that the packet at
     /// least gets onto the wire 
     fn send_packet(&self, packet: &Packet) {
@@ -205,17 +206,33 @@ impl SendSock {
     fn close(&self) {
         let fin = Packet::new(Flag::Fin(self.acked), vec![]);
         self.send_packet(&fin);
-
-        // Same massaging as before is required
-        let timer = oneshot_ms(self.timeout_ms);
-        let ref msg_chan = self.msg_chan;
-        select! {
-           msg = msg_chan.recv() => { match msg {
-               Ok(Msg::Fin(_)) => log!("[completed] {}", self.acked),
-               _               => self.close()
-           }},
-           _   = timer.recv()  => self.close()
+        if self.wait_for_fin() {
+            log!("[completed] {}", self.acked);
+        } else {
+            self.close()
         }
+
     }
 
+    /// Blocks until it receives a message from the receiver socket or a timeout
+    /// fires (in which case it flags the socket to begin retransmission). Then
+    /// collects as many outstanding acks as possible from the channel, in the
+    /// case of multiple acks
+    fn wait_for_fin(&self) -> bool {
+        // Wait for an ack or a timeout. Separate assignments are required
+        // to massage into select's syntax
+        let timer = oneshot_ms(self.timeout_ms);
+        let ref msg_chan = self.msg_chan;
+        loop {
+            select! {
+               msg = msg_chan.recv() => {
+                   if let Ok(Msg::Fin(_)) = msg {
+                        return true;
+                   }
+               },
+               _   = timer.recv()    => {break}
+            }
+        }
+        false
+    }
 }
