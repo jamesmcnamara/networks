@@ -11,12 +11,23 @@ use super::Msg;
 /// A socket which only receives messages, dispatches acks, and passes
 /// received acks to the sender socket. Provides minimal buffering for 
 /// out of order packets.
+/// NOTE: `RecvSock`s appear in both the sender and receiver, but the 
+/// reciever has additional features to process message. These are
+/// annotated with `GlobalReceiver` 
 pub struct RecvSock {
+    /// Wrapped transmitter
     inner: UdpSocket,
-    dest: Option<SocketAddr>,
+
+    ///Count of bytes seen in order
     acked: u64,
+
+    /// Should this socket stay open
     closed: bool,
+
+    /// Channel to transmit acks to the sender 
     msg_chan: mpsc::Sender<Msg>,
+
+    /// In-order buffer for out-of-order messages
     buffer: BTreeMap<u64, Packet>,
 
 }
@@ -24,11 +35,9 @@ pub struct RecvSock {
 /// Public constructor defined outside of the Impl so that the 
 /// module can import it, use it to define `open_connection` and
 /// not re-export it; hackily creating a protected constructor
-pub fn make_recv_sock(inner: UdpSocket, dest: Option<SocketAddr>, 
-                      msg_chan: mpsc::Sender<Msg>) -> RecvSock {
+pub fn make_recv_sock(inner: UdpSocket, msg_chan: mpsc::Sender<Msg>) -> RecvSock {
     RecvSock {
         inner: inner,
-        dest: dest,
         acked: 0,
         closed: false,
         msg_chan: msg_chan,
@@ -48,31 +57,34 @@ impl RecvSock {
                 Ok((n, addr))  => (n, addr),
                 Err(e) => {log!("recv error: {}", e); continue;},
             };
-            if let None = self.dest {
-                self.dest = Some(addr);
-            }
+
             if let Ok(pack) = String::from_utf8((&payload[0..len]).to_vec()) {
-                self.process_message(pack);
+                self.process_message(pack, addr);
             }
         }
     }
    
     /// Attempts to decode the packet and transmit the appropriate ack
     /// for data messages. Passes received acks to the sender sock 
-    fn process_message(&mut self, json: String) {
+    fn process_message(&mut self, json: String, addr: SocketAddr) {
         if let Ok(packet) = Packet::decode(&json) {
             match packet.flag {
-                Flag::Data(_) =>  self.process_new_data(packet),
+                // Only occurs if global sender 
+                Flag::Data(_) =>  self.process_new_data(packet, addr),
+
+                // Only occurs if local sender socket. Increment acked
+                // and pass on the message to sender
                 Flag::Ack(n)  => {
                     self.acked = n;
                     self.msg_chan.send(Msg::Ack(n)).ok()
                         .expect("sender hung up");
                 },
+
+                //Finalizer message
                 Flag::Fin(n)  => {
                     drop(self.msg_chan.send(Msg::Fin(n)));
-                    log!("Received fin m:{} t:{}", self.acked, n);
                     if n == self.acked {
-                        self.fin();
+                        self.fin(addr);
                         self.closed = true;
                         log!("[completed] {}", self.acked)
                     }
@@ -80,15 +92,18 @@ impl RecvSock {
             }
         }
     }
-
-    fn process_new_data(&mut self, packet: Packet) {
+    
+    /// Global Receiver 
+    /// Determines if this packet is old, in-order, or out-of-order,
+    /// then drops, increments acked, or buffers as appropriate
+    /// Always acks
+    fn process_new_data(&mut self, packet: Packet, addr: SocketAddr) {
         let seq = packet.seq();
         let len = packet.len();
         let status = match seq.cmp(&self.acked) {
             Ordering::Less    => "IGNORED",
             Ordering::Equal   => {
-                self.acked += packet.len();
-                print!("{}", packet.body());
+                self.inc_acked(packet);
                 self.read_buffer();
                 "ACCEPTED (in-order)"
             },
@@ -99,42 +114,51 @@ impl RecvSock {
         };
 
         log!("[recv data] {} ({}) {}", seq, len, status);
-        self.ack();
+        self.ack(addr);
+    }
+   
+    /// Global Receiver
+    /// Consumes a packet, increments acked by it's len, and prints its body
+    fn inc_acked(&mut self, packet: Packet) {
+        self.acked += packet.len();
+        print!("{}", packet.body());
     }
 
-
+    /// Global Receiver
+    /// Iterates through the buffer, and acks all packets that are in 
+    /// sequence with the current ack, and reinserts those out of order
     fn read_buffer(&mut self) {
         let buffer = mem::replace(&mut self.buffer, BTreeMap::new());
         for (seq, packet) in buffer {
             if seq == self.acked {
-                self.acked += packet.len();
-                print!("{}", packet.body());
+                self.inc_acked(packet)
             } else {
                 self.buffer.insert(seq, packet);
             }
         }
     }
 
+    /// Global Receiver
     /// Transmits an ack of the current bytes fully read. Continuously 
     /// retransmits on failure 
-    fn ack(&self) {
+    fn ack(&self, addr: SocketAddr) {
         let ack = Packet::new(Flag::Ack(self.acked), vec![]);
-        self.send_packet(ack);
+        self.send_packet(ack, addr);
     }
     
     /// Echos a fin to signify termination of the connection 
-    fn fin(&self) {
+    fn fin(&self, addr: SocketAddr) {
         let fin = Packet::new(Flag::Fin(self.acked), vec![]);
-        self.send_packet(fin);
+        self.send_packet(fin, addr);
     }
    
-    fn send_packet(&self, packet: Packet) {
+    /// Sends a packet to the sockets destination. Ensures that the packet at
+    /// least gets onto the wire 
+    fn send_packet(&self, packet: Packet, addr: SocketAddr) {
         log!("acking {}", self.acked);
-        if let Err(e) = 
-            self.inner.send_to(packet.encode().as_bytes(), 
-                               self.dest.expect("No destination defined")) {
+        if let Err(e) = self.inner.send_to(packet.encode().as_bytes(), addr) {
             log!("Error occured on packet transmission: {}", e);
-            self.send_packet(packet);
+            self.send_packet(packet, addr);
         }
     }
 }

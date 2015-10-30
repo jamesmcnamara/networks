@@ -14,6 +14,8 @@ use std::env;
 
 use rand::random;
 
+
+/// Logs a timestamped format string and some optional arguments to stderr
 macro_rules! log (
     ($fmt_string:expr, $($args:tt)*) => {{
         writeln!(&mut ::std::io::stderr(), 
@@ -28,6 +30,8 @@ macro_rules! log (
 pub mod socket;
 pub mod packet;
 
+
+/// Attempts to bind to random UDP ports until it succeeds and returns a socket 
 fn open_socket() -> UdpSocket {
     loop {
         let k = 1024 + random::<u16>();
