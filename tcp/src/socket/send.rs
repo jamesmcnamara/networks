@@ -51,7 +51,7 @@ pub fn make_send_sock(inner: UdpSocket, dest: &str,
         dup_acks: 0,
         outstanding: vec![],
         limit: 12,
-        timeout_ms: 8000,
+        timeout_ms: 5000,
         retransmit: false,
     }
 }
