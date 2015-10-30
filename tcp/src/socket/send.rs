@@ -50,8 +50,8 @@ pub fn make_send_sock(inner: UdpSocket, dest: &str,
         goodput: 0,
         dup_acks: 0,
         outstanding: vec![],
-        limit: 32,
-        timeout_ms: 3000,
+        limit: 12,
+        timeout_ms: 8000,
         retransmit: false,
     }
 }
@@ -183,12 +183,7 @@ impl SendSock {
                         self.send_packet(self.outstanding.last().unwrap())
                     }
                 },
-                None      => {
-                    if let Some(last_packet) = self.outstanding.last() {
-                        self.send_packet(last_packet);
-                    }
-                    return self.outstanding.len() > 0;
-                },
+                None      => { return self.outstanding.len() > 0; },
             }
         }
         true
