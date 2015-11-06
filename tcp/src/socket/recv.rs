@@ -76,8 +76,7 @@ impl RecvSock {
                 // and pass on the message to sender
                 Flag::Ack(n)  => {
                     self.acked = n;
-                    self.msg_chan.send(Msg::Ack(n)).ok()
-                        .expect("sender hung up");
+                    drop(self.msg_chan.send(Msg::Ack(n)))
                 },
 
                 //Finalizer message
@@ -114,7 +113,9 @@ impl RecvSock {
         };
 
         log!("[recv data] {} ({}) {}", seq, len, status);
-        self.ack(addr);
+        if status != "IGNORED" {
+            self.ack(addr);
+        }
     }
    
     /// Global Receiver
@@ -131,7 +132,7 @@ impl RecvSock {
         let buffer = mem::replace(&mut self.buffer, BTreeMap::new());
         for (seq, packet) in buffer {
             if seq == self.acked {
-                self.inc_acked(packet)
+                self.inc_acked(packet);
             } else {
                 self.buffer.insert(seq, packet);
             }
@@ -155,7 +156,6 @@ impl RecvSock {
     /// Sends a packet to the sockets destination. Ensures that the packet at
     /// least gets onto the wire 
     fn send_packet(&self, packet: Packet, addr: SocketAddr) {
-        log!("acking {}", self.acked);
         if let Err(e) = self.inner.send_to(packet.encode().as_bytes(), addr) {
             log!("Error occured on packet transmission: {}", e);
             self.send_packet(packet, addr);

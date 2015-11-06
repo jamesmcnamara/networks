@@ -51,7 +51,7 @@ fn main() {
         thread::spawn(move || sender.send(stdin_bytes));
         recvr
     } else {
-        //sender
+        // Receiver
         socket::open_recvr(local)
     };
     recvr.recv();

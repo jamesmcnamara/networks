@@ -51,7 +51,7 @@ pub fn make_send_sock(inner: UdpSocket, dest: &str,
         dup_acks: 0,
         outstanding: vec![],
         limit: 12,
-        timeout_ms: 5000,
+        timeout_ms: 30000,
         retransmit: false,
     }
 }
@@ -88,7 +88,7 @@ impl SendSock {
 
     /// Consumes a stream of bytes, chunks them, then returns them as packets
     fn packetize_stream<R: Read>(&self, bytes: Bytes<R>) -> Vec<Packet> {
-        let block_size = 4096;
+        let block_size = 2048;
         bytes.map(|b| b.ok().expect("byte decoding error"))
             .into_iter()
             .chunks_lazy(block_size)
@@ -173,7 +173,6 @@ impl SendSock {
     /// Given an ack and a count, determines if it should increment the window
     /// and ack count, or if it should begin a retransmission
     fn handle_acks(&mut self, ack: u64, count: usize) {
-        log!("[recv ack] {}", self.acked);
         if ack > self.acked {
             self.outstanding.retain(|p| p.seq() >= ack);
             self.goodput += self.limit - self.outstanding.len();
@@ -188,12 +187,13 @@ impl SendSock {
 
         // 3 or more duplicate acks in a row trigger retransmission
         self.retransmit = self.dup_acks > 2;
+        log!("[recv ack] {}", self.acked);
     }
 
     /// Sends a packet to the sockets destination. Ensures that the packet at
     /// least gets onto the wire 
     fn send_packet(&self, packet: &Packet) {
-        log!("[send data] {} ({}), ={}= {}", packet.seq(), packet.len(), self.acked, self.limit);
+        log!("[send data] {} ({})", packet.seq(), packet.len());
         if let Err(e) = self.inner.send_to(&packet.encode().into_bytes(), 
                                            self.dest.as_str()) {
             log!("send failed: {}", e);

@@ -4,14 +4,21 @@ use std::slice::Iter;
 use packet::{Result, PacketError};
 use rustc_serialize::json;
 
+/// Denotes the type of this packet, and its sequence number
 #[derive(PartialEq, Debug, RustcEncodable, RustcDecodable, Clone)]
 pub enum Flag {
+    /// New data packet, read the payload
     Data(u64),
+
+    /// Acknowledgement
     Ack(u64),
+
+    /// Close the connection
     Fin(u64),
 }
 
 
+/// Transmission unit
 #[derive(PartialEq, Debug, RustcEncodable, RustcDecodable, Clone)]
 pub struct Packet {
     pub flag: Flag,
@@ -56,10 +63,6 @@ impl Packet {
 
     pub fn body(&self) -> String {
         String::from_utf8(self.payload.clone()).unwrap()
-    }
-
-    pub fn payload<'pkt>(&'pkt self) -> Iter<'pkt, u8> {
-        self.payload.iter()
     }
 
     pub fn seq(&self) -> u64 {
