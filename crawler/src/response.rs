@@ -2,19 +2,19 @@ use std::sync::mpsc;
 
 use data::UrlMsg;
 
-struct HttpResponse {
+struct Response {
     status: usize,
-    headers: Vec<usize>,
+    headers: Vec<String>,
     sender: mpsc::Sender<UrlMsg>,
     url: String
 }
 
-impl HttpResponse {
+impl Response {
     fn new(status: &usize,
-           headers: Vec<usize>,
+           headers: Vec<String>,
            sender: mpsc::Sender<UrlMsg>,
-           url: String) -> HttpResponse {
-        HttpResponse {
+           url: String) -> Response {
+        Response {
             status: *status,
             headers: headers,
             sender: sender,
@@ -37,10 +37,10 @@ impl HttpResponse {
     }
 }
 
-fn parse_ok(headers: &[usize]) -> Vec<String> {
+fn parse_ok(headers: &[String]) -> Vec<String> {
     Vec::new()
 }
 
-fn parse_moved(headers: &[usize]) -> String {
+fn parse_moved(headers: &[String]) -> String {
     "hello".to_string()
 }
