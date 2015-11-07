@@ -7,9 +7,37 @@ enum Header {
     AcceptEncoding(String)
 }
 
+impl Header {
+    fn to_string(&self) -> String {
+        match *self {
+            Header::Host(ref host) =>
+                format_header_text("Host", host),
+            Header::Connection(ref connection) =>
+                format_header_text("Connection", connection),
+            Header::Cookie(ref cookie) =>
+                format_header_text("Cookie", cookie),
+            Header::AcceptEncoding(ref accept_encoding) =>
+                format_header_text("Accept-Encoding", accept_encoding)
+        }
+    }
+}
+
+fn format_header_text(name: &str, value: &str) -> String {
+    format!("{}: {}\n", name, value)
+}
+
 enum Method {
     GET,
     POST(HashMap<String, String>)
+}
+
+impl Method {
+    fn to_string(&self) -> &'static str {
+        match *self {
+            Method::GET => "GET",
+            Method::POST(_) => "POST"
+        }
+    }
 }
 
 struct Request {
@@ -29,36 +57,15 @@ impl Request {
 
     fn send(&self) {
         let mut request = String::new();
-        let method_text = match self.method {
-            Method::GET => "GET",
-            Method::POST(_) => "POST"
-        };
-        request.push_str(&format!("{} {} HTTP/1.0", method_text, self.url));
+        request.push_str(&format!("{} {} HTTP/1.0", self.method.to_string(), self.url));
         for header in &self.headers {
-            let header_text = match *header {
-                Header::Host(ref host) =>
-                    format_header_text("Host", host),
-                Header::Connection(ref connection) =>
-                    format_header_text("Connection", connection),
-                Header::Cookie(ref cookie) =>
-                    format_header_text("Cookie", cookie),
-                Header::AcceptEncoding(ref accept_encoding) =>
-                    format_header_text("Accept-Encoding", accept_encoding)
-            };
-            request.push_str(&header_text);
+            request.push_str(&header.to_string());
         }
-        match self.method {
-            Method::GET => (),
-            Method::POST(ref inputs) => {
-                request.push_str("\n");
-                for (name, value) in inputs.iter() {
-                    request.push_str(&format!("{}={}\n", name, value))
-                }
+        if let Method::POST(ref inputs) = self.method {
+            request.push_str("\n");
+            for (name, value) in inputs.iter() {
+                request.push_str(&format!("{}={}\n", name, value))
             }
         }
     }
-}
-
-fn format_header_text(name: &str, value: &str) -> String {
-    format!("{}: {}\n", name, value)
 }

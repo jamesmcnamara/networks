@@ -10,12 +10,12 @@ struct Response {
 }
 
 impl Response {
-    fn new(status: &usize,
+    fn new(status: usize,
            headers: Vec<String>,
            sender: mpsc::Sender<UrlMsg>,
            url: String) -> Response {
         Response {
-            status: *status,
+            status: status,
             headers: headers,
             sender: sender,
             url: url
