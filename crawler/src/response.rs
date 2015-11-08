@@ -10,9 +10,7 @@ struct Response {
 }
 
 impl Response {
-    fn new(status: usize,
-           headers: Vec<String>,
-           sender: mpsc::Sender<UrlMsg>,
+    fn new(status: usize, headers: Vec<String>, sender: mpsc::Sender<UrlMsg>,
            url: String) -> Response {
         Response {
             status: status,
@@ -23,16 +21,15 @@ impl Response {
     }
 
     fn respond(&self) {
-        let mut new_urls = Vec::new();
-        match self.status {
-            200 => new_urls.push_all(&parse_ok(&self.headers)),
-            301 => new_urls.push(parse_moved(&self.headers)),
-            403 => (),
-            500 => new_urls.push(self.url.clone()),
-            _ => unreachable!()
-        }
-        if new_urls.is_empty() {
-            self.sender.send(UrlMsg::Add(new_urls));
+        let new_urls = match self.status {
+            200 => Some(parse_ok(&self.headers)),
+            301 => Some(vec![parse_moved(&self.headers)]),
+            403 => None,
+            500 => Some(vec![self.url.clone()]),
+            code => unreachable!("Received code {}, could not parse", code)
+        };
+        if let Some(urls) = new_urls {
+            self.sender.send(UrlMsg::Add(urls));
         }
     }
 }

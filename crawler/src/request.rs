@@ -67,5 +67,6 @@ impl Request {
                 request.push_str(&format!("{}={}\n", name, value))
             }
         }
+        request.push_str("\n");
     }
 }
