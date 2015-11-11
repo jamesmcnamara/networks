@@ -22,22 +22,12 @@ impl Response {
 
     fn respond(&self) {
         let new_urls = match self.status {
-            200 => Some(parse_ok(&self.headers)),
-            301 => Some(vec![parse_moved(&self.headers)]),
+            200 => None,
+            301 => None,
             403 => None,
             500 => Some(vec![self.url.clone()]),
             code => unreachable!("Received code {}, could not parse", code)
         };
-        if let Some(urls) = new_urls {
-            self.sender.send(UrlMsg::Add(urls));
-        }
+        if let Some(urls) = new_urls { self.sender.send(UrlMsg::Add(urls)); }
     }
-}
-
-fn parse_ok(headers: &[String]) -> Vec<String> {
-    Vec::new()
-}
-
-fn parse_moved(headers: &[String]) -> String {
-    "hello".to_string()
 }
