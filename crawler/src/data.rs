@@ -72,6 +72,10 @@ impl UrlStore {
         }
     }
 
+    pub fn add_crawler(&mut self, resp_chan: mpsc::Sender<UrlResp>) {
+        self.resp_chans.push(resp_chan);
+    }
+
     fn add(&mut self, urls: Vec<String>) {
         for url in urls {
             self.frontier.push_back(url);
@@ -106,6 +110,7 @@ impl UrlStore {
             if self.visited.contains(&url) {
                 self.get_fresh_url()
             } else {
+                self.visited.insert(url.clone());
                 Some(url)
             }
         } else {

@@ -69,7 +69,7 @@ impl Crawler {
     }
 
 
-    pub fn get_next_page(&mut self) {
+    pub fn get_next_page(mut self) {
         loop {
             if let Err(_) = self.req_chan.send(UrlReq::Request(self.id)) {
                 return;
@@ -82,7 +82,7 @@ impl Crawler {
     }
     
     pub fn send_request(&mut self, req: Request) {
-        println!("req is {}", req);
+        //println!("req is {}", req);
         drop(self.pipe.write(req.to_string().as_bytes()));
         self.handle_response(req.route.clone());
     }
@@ -90,7 +90,7 @@ impl Crawler {
     fn handle_response(&mut self, route: String) {
         let mut resp = String::new();
         drop(self.pipe.read_to_string(&mut resp));
-        println!("raw response was {}", resp);
+        //println!("raw response was {}", resp);
         let resp = Response::new(resp); 
         self.process_headers(&resp.headers);
         let new_urls = match resp.status {
@@ -103,7 +103,7 @@ impl Crawler {
          if let Some(urls) = new_urls {
              drop(self.req_chan.send(UrlReq::Add(urls)));
         }
-        println!("response is {:?}", resp);
+        //println!("response is {:?}", resp);
     }
 
     fn get_redirect(&self, headers: &[Header]) -> String {
@@ -150,4 +150,10 @@ impl Crawler {
         }
         headers
     }
+    
+    pub fn clone_chan(&self) -> mpsc::Sender<UrlReq> {
+        self.req_chan.clone()
+    }
+
+
 }
