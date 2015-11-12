@@ -1,6 +1,7 @@
 use std::net;
 use std::io::{Read, Write};
 use std::ops::Deref;
+use std::str::Lines;
 use std::sync::mpsc;
 
 use itertools::Itertools;
@@ -87,12 +88,60 @@ impl Crawler {
         self.handle_response(req.route.clone());
     }
 
+    fn add_chunks_continue(&self, lines: Vec<String>, body: &mut String) -> bool {
+        let mut lines = lines.into_iter();
+        while let Some(line) = lines.next() {
+            let mut len = Crawler::parse_len(&line);
+            if len == 0 {
+                return false;
+            }
+            while len > 0 {
+                match lines.next() {
+                    Some(line) => { body.push_str(&line); len -= line.len();},
+                    None       => panic!("not enough text in response"),
+                }
+            }
+        }
+        true
+    }
+
+    fn some_thing(&mut self, lines: Vec<String>, mut body: String) -> String {
+        if self.add_chunks_continue(lines, &mut body) {
+            let mut resp = String::new();
+            drop(self.pipe.read_to_string(&mut resp));
+            self.some_thing(resp.lines().map(str::to_string).collect(), body)
+        } else {
+            body
+        }
+    }
+
+    fn read_body(&mut self, lines: Vec<String>, headers: &[Header]) -> String {
+        if Header::chunked_encoding(&headers) {
+            println!("chunked is true, data is {:?}", lines);
+            self.some_thing(lines, String::new())
+        } else {
+            lines.into_iter().join("\n")
+        }
+    }
+
     fn handle_response(&mut self, route: String) {
         let mut resp = String::new();
-        drop(self.pipe.read_to_string(&mut resp));
-        //println!("raw response was {}", resp);
-        let resp = Response::new(resp); 
-        self.process_headers(&resp.headers);
+        match self.pipe.read_to_string(&mut resp) {
+            Ok(0) => println!("no content"),
+            Err(e)=> println!("error is {}", e),
+            _     => (),
+        }
+        println!("raw response is {}", resp);
+        let lines = resp.lines().map(str::to_string).collect_vec();
+        let mut resp_lines = resp.lines();
+        let mut body_lines = resp.lines().skip_while(|line| !line.is_empty());
+        let status = Crawler::parse_status(resp_lines.next());
+        let headers = Header::from_lines(resp_lines); 
+        println!("headers are {:?}", headers);
+        self.process_headers(&headers);
+        let body = self.read_body(body_lines.map(str::to_string).collect(), &headers);
+        println!("raw response was {}", resp);
+        let resp = Response::new(status, headers, body); 
         let new_urls = match resp.status {
             200...299 => Some(self.parse_body(&resp.body)),
             300...399 => Some(vec![self.get_redirect(&resp.headers)]),
@@ -104,6 +153,18 @@ impl Crawler {
              drop(self.req_chan.send(UrlReq::Add(urls)));
         }
         //println!("response is {:?}", resp);
+    }
+
+    fn parse_status(status_line: Option<&str>) -> usize {
+        let status = status_line
+            .expect("http response had no content")
+            .split_whitespace()
+            .nth(1)
+            .map(str::parse);
+        match status {
+            Some(Ok(n)) => n,
+            _           => panic!("Parsing of status code failed: {:?}", status),
+        }
     }
 
     fn get_redirect(&self, headers: &[Header]) -> String {
@@ -141,8 +202,19 @@ impl Crawler {
         self.pipe = net::TcpStream::connect(self.host.deref()).unwrap();
     }
 
+
+    fn parse_len(line: &str) -> usize {
+        let hex_len = match line.split(";").next() {
+            Some(slice) => slice.trim(),
+            None        => line.trim(),
+        };
+        usize::from_str_radix(hex_len, 16)
+            .ok()
+            .expect(&format!("invalid hex for content len: {}", line))
+    }
+
     fn get_headers(&self) -> Vec<Header> {
-        let mut headers = vec![//Header::Connection("Keep-Alive".to_string()),
+        let mut headers = vec![Header::Connection("close".to_string()),
                                Header::Host(self.host.clone())];
         drop(self.req_chan.send(UrlReq::GetCookie(self.id)));
         if let Ok(UrlResp::Cookie(Some(cookie))) = self.resp_recv.recv() {
