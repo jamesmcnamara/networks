@@ -2,3 +2,6 @@
 name = "crawler"
 version = "0.1.0"
 authors = ["jamesmcnamara <jamesscottmcnamara@gmail.com>"]
+
+[dependencies]
+select = "0.1.1"
