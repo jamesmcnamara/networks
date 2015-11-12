@@ -8,6 +8,7 @@ pub fn parse_html(html: &str) -> (Vec<String>, Option<String>) {
         .find(Class("secret_flag"))
         .first()
         .map(|secret| secret.text());
+
     let links = document
         .find(Name("a"))
         .iter()
@@ -15,3 +16,4 @@ pub fn parse_html(html: &str) -> (Vec<String>, Option<String>) {
         .collect();
     (links, secret)
 }
+

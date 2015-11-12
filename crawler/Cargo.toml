@@ -5,3 +5,4 @@ authors = ["jamesmcnamara <jamesscottmcnamara@gmail.com>"]
 
 [dependencies]
 select = "0.1.1"
+itertools = "0.4.3"
