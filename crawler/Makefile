@@ -1,8 +1,8 @@
 default:
 	cargo build
 
-run: 
+run: default
 	cargo run 000539023 EA3GGNHC
 
-test: 
+test: default
 	cargo test

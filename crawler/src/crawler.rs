@@ -9,6 +9,7 @@ use data::{UrlReq, UrlResp};
 use http::utils::{Header, Method};
 use http::request::Request;
 use http::response::Response;
+use parse::parse_html;
 
 pub struct Crawler {
    req_chan: mpsc::Sender<UrlReq>,
@@ -129,7 +130,11 @@ impl Crawler {
     }
     
     pub fn parse_body(&self, body: &str) -> Vec<String> {
-        vec![]
+        let (urls, sf) = parse_html(body);
+        if let Some(sf) = sf {
+            self.req_chan.send(UrlReq::Flag(sf));
+        }
+        urls
     }
 
     fn reset_connection(&mut self) {
