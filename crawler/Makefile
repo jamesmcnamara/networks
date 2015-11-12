@@ -4,10 +4,11 @@ export DYLD_LIBRARY_PATH:=$(RUST_DYLD):$(DYLD_LIBRARY_PATH)
 export LD_LIBRARY_PATH:=/usr/local/lib:/home/jamcnam/rust/lib
 
 default:
-	cargo build
+	cargo build --release
+	mv target/release/webcrawler .
 
 run: default
-	cargo run 000539023 EA3GGNHC
+	./webcrawler 000539023 EA3GGNHC
 
 test: default
 	cargo test
