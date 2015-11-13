@@ -21,8 +21,9 @@ pub fn parse_html(html: &str) -> (Vec<String>, Option<String>) {
         .find(Name("a"))
         .iter()
         .filter_map(|a| a.attr("href").map(str::to_string))
-        .filter(|ln| ln.starts_with("/") 
-                || ln.starts_with("http://fring.ccs.neu.edu"))
+        .filter(|ln| {
+            ln.starts_with("/") 
+            || ln.starts_with("http://fring.ccs.neu.edu")})
         .collect();
     (links, secret)
 }

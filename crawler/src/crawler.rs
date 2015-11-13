@@ -97,8 +97,13 @@ impl Crawler {
             }
             while len > 0 {
                 match lines.next() {
-                    Some(line) => { body.push_str(&line); len -= line.len();},
-                    None       => panic!("not enough text in response"),
+                    Some(line) => {
+                        body.push_str(&line);
+                        len -= line.len();
+                    },
+                    None => {
+                        return false;
+                    }
                 }
             }
         }
@@ -117,7 +122,7 @@ impl Crawler {
 
     fn read_body(&mut self, lines: Vec<String>, headers: &[Header]) -> String {
         if Header::chunked_encoding(&headers) {
-            println!("chunked is true, data is {:?}", lines);
+            //println!("chunked is true, data is {:?}", lines);
             self.some_thing(lines, String::new())
         } else {
             lines.into_iter().join("\n")
@@ -126,21 +131,21 @@ impl Crawler {
 
     fn handle_response(&mut self, route: String) {
         let mut resp = String::new();
-        match self.pipe.read_to_string(&mut resp) {
-            Ok(0) => println!("no content"),
-            Err(e)=> println!("error is {}", e),
-            _     => (),
-        }
-        println!("raw response is {}", resp);
+        drop(self.pipe.read_to_string(&mut resp));
+        //println!("raw response is {}", resp);
         let lines = resp.lines().map(str::to_string).collect_vec();
         let mut resp_lines = resp.lines();
-        let mut body_lines = resp.lines().skip_while(|line| !line.is_empty());
+        let mut body_lines = resp
+            .lines()
+            .map(str::trim)
+            .skip_while(|line| !line.is_empty())
+            .skip(1);
         let status = Crawler::parse_status(resp_lines.next());
-        let headers = Header::from_lines(resp_lines); 
-        println!("headers are {:?}", headers);
+        let headers = Header::from_lines(resp_lines);
+        //println!("headers are {:?}", headers);
         self.process_headers(&headers);
-        let body = self.read_body(body_lines.map(str::to_string).collect(), &headers);
-        println!("raw response was {}", resp);
+        let body = self.read_body(body_lines.map(str::to_owned).collect(), &headers);
+        //println!("raw response was {}", resp);
         let resp = Response::new(status, headers, body); 
         let new_urls = match resp.status {
             200...299 => Some(self.parse_body(&resp.body)),
