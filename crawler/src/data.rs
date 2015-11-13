@@ -81,6 +81,10 @@ impl UrlStore {
             self.frontier.push_back(url);
         }
     }
+    
+    pub fn add_crawler(&mut self, resp: mpsc::Sender<UrlResp>) {
+        self.resp_chans.push(resp);
+    }
 
     fn add_cookie(&mut self, cookie: String) {
         if let Some(ref mut old_cookie) = self.cookie {

@@ -23,7 +23,7 @@ impl Request {
 
 impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let mut request = format!("{} {} HTTP/1.0\n", self.method, self.route);
+        let mut request = format!("{} {} HTTP/1.1\n", self.method, self.route);
 
         for header in &self.headers {
             request.push_str(&header.to_string());
