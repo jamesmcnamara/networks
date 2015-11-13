@@ -1,5 +1,3 @@
-use itertools::Itertools;
-
 use super::utils::Header;
 
 #[derive(Debug)]

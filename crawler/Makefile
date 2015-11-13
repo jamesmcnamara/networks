@@ -5,9 +5,9 @@ export LD_LIBRARY_PATH:=/usr/local/lib:/home/jamcnam/rust/lib
 
 default:
 	cargo build --release
-	mv target/release/webcrawler .
 
 run: default
+	cp target/release/crawler webcrawler
 	./webcrawler 000539023 EA3GGNHC
 
 test: default

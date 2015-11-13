@@ -1,7 +1,6 @@
 use std::net;
 use std::io::{Read, Write};
 use std::ops::Deref;
-use std::str::Lines;
 use std::sync::mpsc;
 
 use itertools::Itertools;
@@ -133,9 +132,8 @@ impl Crawler {
         let mut resp = String::new();
         drop(self.pipe.read_to_string(&mut resp));
         //println!("raw response is {}", resp);
-        let lines = resp.lines().map(str::to_string).collect_vec();
         let mut resp_lines = resp.lines();
-        let mut body_lines = resp
+        let body_lines = resp
             .lines()
             .map(str::trim)
             .skip_while(|line| !line.is_empty())
@@ -198,9 +196,13 @@ impl Crawler {
     pub fn parse_body(&self, body: &str) -> Vec<String> {
         let (urls, sf) = parse_html(body);
         if let Some(sf) = sf {
-            self.req_chan.send(UrlReq::Flag(sf));
+            drop(self.req_chan.send(UrlReq::Flag(sf)));
         }
         urls
+    }
+
+    pub fn clone_chan(&self) -> mpsc::Sender<UrlReq> {
+        self.req_chan.clone()
     }
 
     fn reset_connection(&mut self) {
