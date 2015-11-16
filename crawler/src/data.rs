@@ -1,27 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::sync::mpsc;
 
-// pub struct Cookie(HashMap<String, String>);
-// 
-// impl Cookie {
-//     fn new() -> Cookie {
-//         Cookie(HashMap::new())
-//     }
-// 
-//     fn add(&mut self, cookie: String) {
-//        let (key, value) = match cookie.find("=") {
-//            Some(idx) => (cookie[..idx], cookie[idx..]),
-//            None      => panic!("malformed cookie: {}", cookie),
-//        };
-//        self.0.insert(key.to_string(), value.to_string());
-//     }
-// 
-//     fn get(&self, cookie: String) -> Option<String> {
-//         self.0.get(cookie)
-//     }
-// }
-
-
 pub enum UrlReq {
     Add(Vec<String>),
     SetCookie(String),
@@ -80,6 +59,10 @@ impl UrlStore {
         for url in urls {
             self.frontier.push_back(url);
         }
+    }
+    
+    pub fn add_crawler(&mut self, resp: mpsc::Sender<UrlResp>) {
+        self.resp_chans.push(resp);
     }
 
     fn add_cookie(&mut self, cookie: String) {
