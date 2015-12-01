@@ -8,7 +8,7 @@ use rustc_serialize::json::{Json, ToJson};
 pub struct NodeId(pub [u8; 4]);
 
 impl NodeId {
-    pub fn from_json(json: &Json) -> Option<NodeId> {
+    pub fn as_node_id(json: &Json) -> Option<NodeId> {
         match json.as_string().expect("node id must be string").as_bytes() {
             [a, b, c, d] => Some(NodeId([a as u8, b as u8, c as u8, d as u8])),
             _            => None,

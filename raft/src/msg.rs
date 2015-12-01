@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::convert::From;
 
 use rustc_serialize::json::{Json, Object, ToJson};
 
@@ -7,9 +8,14 @@ use super::node::NodeId;
 macro_rules! get {
     ($obj:ident -> $key:expr; $parser:path) => {{
         let err = format!("Json parse failed for {}", $key);
-        $parser($obj.get($key).expect(&err)).expect(&err)
+        $parser($obj.as_object()
+                .expect("get not provided an object")
+                .get($key)
+                .expect(&err))
+            .expect(&err)
     }}
 }
+
 pub trait AddJson {
     fn add_json<T: ToJson>(&mut self, key: &'static str, val: T);
 }
@@ -35,12 +41,14 @@ impl BaseMsg {
         d.insert(s("leader"), self.leader.to_json());
         d.insert(s("mid"), self.mid.to_json());
     }
+}
 
-    fn from_obj(obj: &Object) -> BaseMsg {
+impl <'a>From<&'a Json> for BaseMsg {
+    fn from(obj: &'a Json) -> BaseMsg {
         BaseMsg {
-            src: get!(obj -> "src"; NodeId::from_json),
-            dst: get!(obj -> "dst"; NodeId::from_json),
-            leader: get!(obj -> "leader"; NodeId::from_json),
+            src: get!(obj -> "src"; NodeId::as_node_id),
+            dst: get!(obj -> "dst"; NodeId::as_node_id),
+            leader: get!(obj -> "leader"; NodeId::as_node_id),
             mid: get!(obj -> "mid"; Json::as_string).to_owned()
         }
     }
@@ -59,9 +67,10 @@ impl InternalMsg {
         d.add_json("last_entry", self.last_entry);
         d.add_json("last_term", self.last_term);
     }
+}
 
-    fn from_json(obj: &Object) -> InternalMsg {
-        
+impl <'a>From<&'a Json> for InternalMsg {
+    fn from(obj: &'a Json) -> InternalMsg {
         InternalMsg {
             term: get!(obj -> "term"; Json::as_u64),
             last_entry: get!(obj -> "last_entry"; Json::as_u64),
@@ -83,11 +92,10 @@ impl Entry {
             value: val.to_owned(),
         }
     }
+}
 
-    fn from_json(entry: &Json) -> Entry {
-        let entry = entry
-            .as_object()
-            .expect("entries must be constructed from a json object");
+impl <'a>From<&'a Json> for Entry {
+    fn from(entry: &'a Json) -> Entry {
         Entry {
             key: get!(entry -> "key"; Json::as_string).to_owned(),
             value: get!(entry -> "value"; Json::as_string).to_owned(),
@@ -152,8 +160,34 @@ impl MsgType {
             MsgType::RequestVote{ .. } => "request_vote",
         }
     }
-    
-    fn from_obj(obj: &Object) -> MsgType {
+
+    fn parse_append_entries(json: &Json) -> MsgType {
+        let int_msg = InternalMsg::from(json);
+        let obj = json.as_object().expect("parse_append_entries expects a JSON object");
+        if let Some(entries) = obj.get("entries") {
+            let entries = entries.as_array()
+                .expect("entries must be an array")
+                .iter()
+                .map(|entry| Entry::from(entry))
+                .collect();
+
+            MsgType::AppendEntries{details: int_msg, entries: Some(entries)}
+        } else {
+            MsgType::AppendEntries{details: int_msg, entries: None}
+        }
+    }
+
+    fn parse_request_vote(obj: &Json) -> MsgType {
+        let int_msg = InternalMsg::from(obj);
+        MsgType::RequestVote{
+            details: int_msg, 
+            candidate_id: get!(obj -> "candidate_id"; Json::as_u64)
+        }
+    }
+}
+
+impl <'a>From<&'a Json> for MsgType {
+    fn from(obj: &'a Json) -> MsgType {
         match get!(obj -> "type"; Json::as_string) {
             "ok" => MsgType::OK,
             "fail" => MsgType::Fail,
@@ -166,30 +200,8 @@ impl MsgType {
             _              => unreachable!("unknown message type"),
         }
     }
-
-    fn parse_append_entries(obj: &Object) -> MsgType {
-        let int_msg = InternalMsg::from_json(obj);
-        if let Some(entries) = obj.get("entries") {
-            let entries = entries.as_array()
-                .expect("entries must be an array")
-                .iter()
-                .map(|entry| Entry::from_json(entry))
-                .collect();
-
-            MsgType::AppendEntries{details: int_msg, entries: Some(entries)}
-        } else {
-            MsgType::AppendEntries{details: int_msg, entries: None}
-        }
-    }
-
-    fn parse_request_vote(obj: &Object) -> MsgType {
-        let int_msg = InternalMsg::from_json(obj);
-        MsgType::RequestVote{
-            details: int_msg, 
-            candidate_id: get!(obj -> "candidate_id"; Json::as_u64)
-        }
-    }
 }
+
 #[derive(PartialEq, Debug)]
 pub struct Msg {
     base: BaseMsg,
@@ -199,13 +211,11 @@ pub struct Msg {
 impl Msg {
 
     fn from_str(s: &str) -> Msg {
-        let raw_json = Json::from_str(s)
+        let raw = Json::from_str(s)
             .ok()
             .expect("parsing json from str failed");
-        let raw = raw_json.as_object()
-            .expect("raw json was not object");
-        let base = BaseMsg::from_obj(raw);
-        let msg = MsgType::from_obj(raw);
+        let base = BaseMsg::from(&raw);
+        let msg = MsgType::from(&raw);
 
         Msg { base: base, msg: msg }
     }
