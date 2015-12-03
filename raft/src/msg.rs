@@ -16,13 +16,31 @@ macro_rules! get {
     }}
 }
 
-pub trait AddJson {
-    fn add_json<T: ToJson>(&mut self, key: &'static str, val: T);
+#[derive(PartialEq, Debug)]
+pub struct Msg {
+    base: BaseMsg,
+    msg: MsgType,
 }
 
-impl AddJson for Object {
-    fn add_json<T: ToJson>(&mut self, key: &'static str, val: T) {
-        self.insert(key.to_owned(), val.to_json());
+impl Msg {
+    pub fn from_str(s: &str) -> Msg {
+        let raw = Json::from_str(s)
+            .ok()
+            .expect("parsing json from str failed");
+        let base = BaseMsg::from(&raw);
+        let msg = MsgType::from(&raw);
+
+        Msg { base: base, msg: msg }
+    }
+}
+
+impl ToJson for Msg {
+    fn to_json(&self) -> Json {
+        let mut d = BTreeMap::new();
+        self.base.fill(&mut d);
+        self.msg.fill(&mut d);
+        
+        Json::Object(d)
     }
 }
 
@@ -36,81 +54,24 @@ struct BaseMsg {
 
 impl BaseMsg {
     fn fill(&self, d: &mut Object) {
-        d.insert(s("src"), self.src.to_json());
-        d.insert(s("dst"), self.dst.to_json());
-        d.insert(s("leader"), self.leader.to_json());
-        d.insert(s("mid"), self.mid.to_json());
+        d.add_json("src", self.src);
+        d.add_json("dst", self.dst);
+        d.add_json("leader", self.leader);
+        d.add_json("mid", self.mid.to_owned());
     }
 }
 
 impl <'a>From<&'a Json> for BaseMsg {
     fn from(obj: &'a Json) -> BaseMsg {
         BaseMsg {
+            leader: get!(obj -> "leader"; NodeId::as_node_id),
             src: get!(obj -> "src"; NodeId::as_node_id),
             dst: get!(obj -> "dst"; NodeId::as_node_id),
-            leader: get!(obj -> "leader"; NodeId::as_node_id),
             mid: get!(obj -> "mid"; Json::as_string).to_owned()
         }
     }
 }
 
-#[derive(PartialEq, Debug)]
-struct InternalMsg {
-    term: u64, 
-    last_entry: u64, 
-    last_term: u64, 
-}
-
-impl InternalMsg {
-    fn fill(&self, d: &mut Object) {
-        d.add_json("term", self.term);
-        d.add_json("last_entry", self.last_entry);
-        d.add_json("last_term", self.last_term);
-    }
-}
-
-impl <'a>From<&'a Json> for InternalMsg {
-    fn from(obj: &'a Json) -> InternalMsg {
-        InternalMsg {
-            term: get!(obj -> "term"; Json::as_u64),
-            last_entry: get!(obj -> "last_entry"; Json::as_u64),
-            last_term: get!(obj -> "last_term"; Json::as_u64),
-        }
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct Entry {
-    pub key: String,
-    pub value: String,
-}
-
-impl Entry {
-    fn new(key: &str, val: &str) -> Entry {
-        Entry {
-            key: key.to_owned(),
-            value: val.to_owned(),
-        }
-    }
-}
-
-impl <'a>From<&'a Json> for Entry {
-    fn from(entry: &'a Json) -> Entry {
-        Entry {
-            key: get!(entry -> "key"; Json::as_string).to_owned(),
-            value: get!(entry -> "value"; Json::as_string).to_owned(),
-        }
-    }
-}
-
-impl ToJson for Entry {
-    fn to_json(&self) -> Json {
-        let mut d = BTreeMap::new();
-        d.add_json("key", self.key.to_owned());
-        d.add_json("value", self.value.to_owned());
-        Json::Object(d)
-    }
-}
 
 #[derive(PartialEq, Debug)]
 enum MsgType {
@@ -203,31 +164,70 @@ impl <'a>From<&'a Json> for MsgType {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct Msg {
-    base: BaseMsg,
-    msg: MsgType,
+struct InternalMsg {
+    term: u64, 
+    last_entry: u64, 
+    last_term: u64, 
 }
 
-impl Msg {
-
-    fn from_str(s: &str) -> Msg {
-        let raw = Json::from_str(s)
-            .ok()
-            .expect("parsing json from str failed");
-        let base = BaseMsg::from(&raw);
-        let msg = MsgType::from(&raw);
-
-        Msg { base: base, msg: msg }
+impl InternalMsg {
+    fn fill(&self, d: &mut Object) {
+        d.add_json("term", self.term);
+        d.add_json("last_entry", self.last_entry);
+        d.add_json("last_term", self.last_term);
     }
 }
 
-impl ToJson for Msg {
+impl <'a>From<&'a Json> for InternalMsg {
+    fn from(obj: &'a Json) -> InternalMsg {
+        InternalMsg {
+            term: get!(obj -> "term"; Json::as_u64),
+            last_entry: get!(obj -> "last_entry"; Json::as_u64),
+            last_term: get!(obj -> "last_term"; Json::as_u64),
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct Entry {
+    pub key: String,
+    pub value: String,
+}
+
+impl Entry {
+    pub fn new(key: &str, val: &str) -> Entry {
+        Entry {
+            key: key.to_owned(),
+            value: val.to_owned(),
+        }
+    }
+}
+
+impl <'a>From<&'a Json> for Entry {
+    fn from(entry: &'a Json) -> Entry {
+        Entry {
+            key: get!(entry -> "key"; Json::as_string).to_owned(),
+            value: get!(entry -> "value"; Json::as_string).to_owned(),
+        }
+    }
+}
+
+impl ToJson for Entry {
     fn to_json(&self) -> Json {
         let mut d = BTreeMap::new();
-        self.base.fill(&mut d);
-        self.msg.fill(&mut d);
-        
+        d.add_json("key", self.key.to_owned());
+        d.add_json("value", self.value.to_owned());
         Json::Object(d)
+    }
+}
+
+pub trait AddJson {
+    fn add_json<T: ToJson>(&mut self, key: &'static str, val: T);
+}
+
+impl AddJson for Object {
+    fn add_json<T: ToJson>(&mut self, key: &'static str, val: T) {
+        self.insert(key.to_owned(), val.to_json());
     }
 }
 
