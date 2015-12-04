@@ -120,6 +120,10 @@ impl Crawler {
 
     fn read_body(&mut self, lines: Vec<String>, headers: &[Header]) -> String {
         if Header::chunked_encoding(&headers) {
+<<<<<<< HEAD
+=======
+            //println!("chunked is true, data is {:?}", lines);
+>>>>>>> 149b677ffac1b6ff293e73be7d2a3b9cb7e55e49
             self.some_thing(lines, String::new())
         } else {
             lines.into_iter().join("\n")
@@ -129,6 +133,10 @@ impl Crawler {
     fn handle_response(&mut self, route: String) {
         let mut resp = String::new();
         drop(self.pipe.read_to_string(&mut resp));
+<<<<<<< HEAD
+=======
+        //println!("raw response is {}", resp);
+>>>>>>> 149b677ffac1b6ff293e73be7d2a3b9cb7e55e49
         let mut resp_lines = resp.lines();
         let body_lines = resp
             .lines()
@@ -137,8 +145,15 @@ impl Crawler {
             .skip(1);
         let status = Crawler::parse_status(resp_lines.next());
         let headers = Header::from_lines(resp_lines);
+<<<<<<< HEAD
         self.process_headers(&headers);
         let body = self.read_body(body_lines.map(str::to_owned).collect(), &headers);
+=======
+        //println!("headers are {:?}", headers);
+        self.process_headers(&headers);
+        let body = self.read_body(body_lines.map(str::to_owned).collect(), &headers);
+        //println!("raw response was {}", resp);
+>>>>>>> 149b677ffac1b6ff293e73be7d2a3b9cb7e55e49
         let resp = Response::new(status, headers, body); 
         let new_urls = match resp.status {
             200...299 => Some(self.parse_body(&resp.body)),
@@ -150,6 +165,18 @@ impl Crawler {
          if let Some(urls) = new_urls {
              drop(self.req_chan.send(UrlReq::Add(urls)));
         }
+
+    fn parse_status(status_line: Option<&str>) -> usize {
+        let status = status_line
+            .expect("http response had no content")
+            .split_whitespace()
+            .nth(1)
+            .map(str::parse);
+        match status {
+            Some(Ok(n)) => n,
+            _           => panic!("Parsing of status code failed: {:?}", status),
+        }
+    }
 
     fn parse_status(status_line: Option<&str>) -> usize {
         let status = status_line

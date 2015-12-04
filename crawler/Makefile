@@ -8,7 +8,6 @@ default:
 	cp target/release/crawler webcrawler
 
 run: default
-	cp target/release/crawler webcrawler
 	./webcrawler 000539023 EA3GGNHC
 
 test: default

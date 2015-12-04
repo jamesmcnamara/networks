@@ -53,4 +53,5 @@ fn main() {
         thread::spawn(move || crawler.get_next_page());
     }
     crawler.get_next_page();
+
 }

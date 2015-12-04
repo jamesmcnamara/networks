@@ -1,27 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::sync::mpsc;
 
-// pub struct Cookie(HashMap<String, String>);
-// 
-// impl Cookie {
-//     fn new() -> Cookie {
-//         Cookie(HashMap::new())
-//     }
-// 
-//     fn add(&mut self, cookie: String) {
-//        let (key, value) = match cookie.find("=") {
-//            Some(idx) => (cookie[..idx], cookie[idx..]),
-//            None      => panic!("malformed cookie: {}", cookie),
-//        };
-//        self.0.insert(key.to_string(), value.to_string());
-//     }
-// 
-//     fn get(&self, cookie: String) -> Option<String> {
-//         self.0.get(cookie)
-//     }
-// }
-
-
 pub enum UrlReq {
     Add(Vec<String>),
     SetCookie(String),
