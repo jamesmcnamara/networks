@@ -18,8 +18,8 @@ macro_rules! get {
 
 #[derive(PartialEq, Debug)]
 pub struct Msg {
-    base: BaseMsg,
-    msg: MsgType,
+    pub base: BaseMsg,
+    pub msg: MsgType,
 }
 
 impl Msg {
@@ -45,11 +45,11 @@ impl ToJson for Msg {
 }
 
 #[derive(PartialEq, Debug)]
-struct BaseMsg {
-    src: NodeId,
-    dst: NodeId,
-    leader: NodeId,
-    mid: String,
+pub struct BaseMsg {
+    pub src: NodeId,
+    pub dst: NodeId,
+    pub leader: NodeId,
+    pub mid: String,
 }
 
 impl BaseMsg {
@@ -74,7 +74,7 @@ impl <'a>From<&'a Json> for BaseMsg {
 
 
 #[derive(PartialEq, Debug)]
-enum MsgType {
+pub enum MsgType {
     OK,
     Fail,
     Redirect,
@@ -164,10 +164,10 @@ impl <'a>From<&'a Json> for MsgType {
 }
 
 #[derive(PartialEq, Debug)]
-struct InternalMsg {
-    term: u64, 
-    last_entry: u64, 
-    last_term: u64, 
+pub struct InternalMsg {
+    pub term: u64, 
+    pub last_entry: u64, 
+    pub last_term: u64, 
 }
 
 impl InternalMsg {

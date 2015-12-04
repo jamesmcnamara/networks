@@ -1,13 +1,15 @@
 use std::borrow::Borrow;
+use std::cell;
 use std::collections::HashMap;
 use std::convert::From;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::mem;
 use std::str::from_utf8;
 
 use unix_socket::UnixStream;
-use rustc_serialize::json::{Json, ToJson};
+use rustc_serialize::json::{encode, Json, ToJson};
 
-use super::msg::Msg;
+use super::msg::{Msg, MsgType};
 
 pub struct Node {
     base: BaseNode,
@@ -25,15 +27,24 @@ impl Node {
     pub fn handle_request(&mut self) {
         loop {
             let mut req = String::new();
-            match self.base.port.read_to_string(&mut req) {
-                Ok(n) => self.parse_message(req),
+            match (*self.base.port.borrow_mut()).read_to_string(&mut req) {
+                Ok(n) => self.handle_message(req),
                 _     => continue,
             }
         }
     }
 
-    fn parse_message(&self, req: String) {
-        let msg = Msg::from_str(&req);
+    fn handle_message(&self, req: String) {
+        let mut msg = Msg::from_str(&req);
+        mem::swap(&mut msg.base.src, &mut msg.base.dst);
+        mem::replace(&mut msg.msg, MsgType::Fail);
+        self.send(msg);
+    }
+
+    fn send(&self, msg: Msg) {
+        (*self.base.port.borrow_mut())
+            .write_all(encode(&msg.to_json()).unwrap().as_bytes())
+            .unwrap()
     }
 }
 
@@ -45,7 +56,7 @@ struct BaseNode {
     commit_idx: usize,
     last_applied: usize,
     neighbors: Vec<NodeId>,
-    port: UnixStream,
+    port: cell::RefCell<UnixStream>,
     state_machine: HashMap<String, String>,
 }
 
@@ -59,7 +70,7 @@ impl BaseNode {
             commit_idx: 0,
             last_applied: 0,
             neighbors: neighbors.map(NodeId::from).collect(),
-            port: UnixStream::connect(id).unwrap(),
+            port: cell::RefCell::new(UnixStream::connect(id).unwrap()),
             state_machine: HashMap::new(),
         }
     }
