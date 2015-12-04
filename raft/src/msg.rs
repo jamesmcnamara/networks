@@ -57,7 +57,7 @@ impl BaseMsg {
         d.add_json("src", self.src);
         d.add_json("dst", self.dst);
         d.add_json("leader", self.leader);
-        d.add_json("mid", self.mid.to_owned());
+        d.add_json("MID", self.mid.to_owned());
     }
 }
 
@@ -67,7 +67,7 @@ impl <'a>From<&'a Json> for BaseMsg {
             leader: get!(obj -> "leader"; NodeId::as_node_id),
             src: get!(obj -> "src"; NodeId::as_node_id),
             dst: get!(obj -> "dst"; NodeId::as_node_id),
-            mid: get!(obj -> "mid"; Json::as_string).to_owned()
+            mid: get!(obj -> "MID"; Json::as_string).to_owned()
         }
     }
 }

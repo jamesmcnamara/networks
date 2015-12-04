@@ -6,6 +6,7 @@ use std::io::{Read, Write};
 use std::mem;
 use std::str::from_utf8;
 
+use itertools::Itertools;
 use unix_socket::UnixStream;
 use rustc_serialize::json::{encode, Json, ToJson};
 
@@ -24,17 +25,21 @@ impl Node {
         }
     }
 
-    pub fn handle_request(&mut self) {
-        loop {
-            let mut req = String::new();
-            match (*self.base.port.borrow_mut()).read_to_string(&mut req) {
-                Ok(n) => self.handle_message(req),
-                _     => continue,
+    pub fn handle_requests(&mut self) {
+        let reader = mem::replace(&mut self.base.reader, None).unwrap();
+        let msgs = reader.bytes() 
+            .map(Result::unwrap)
+            .split(|byte| '\n' != *byte as char);
+        for byte_block in msgs {
+            match String::from_utf8(byte_block) {
+                Ok(msg) => self.handle_message(msg),
+                Err(e)  => panic!("error! {}", e),
             }
         }
     }
 
     fn handle_message(&self, req: String) {
+        println!("message is {}", req);
         let mut msg = Msg::from_str(&req);
         mem::swap(&mut msg.base.src, &mut msg.base.dst);
         mem::replace(&mut msg.msg, MsgType::Fail);
@@ -42,7 +47,7 @@ impl Node {
     }
 
     fn send(&self, msg: Msg) {
-        (*self.base.port.borrow_mut())
+        (*self.base.writer.borrow_mut())
             .write_all(encode(&msg.to_json()).unwrap().as_bytes())
             .unwrap()
     }
@@ -56,12 +61,15 @@ struct BaseNode {
     commit_idx: usize,
     last_applied: usize,
     neighbors: Vec<NodeId>,
-    port: cell::RefCell<UnixStream>,
+    reader: Option<UnixStream>,
+    writer: cell::RefCell<UnixStream>,
     state_machine: HashMap<String, String>,
 }
 
 impl BaseNode {
     fn new<I: Iterator<Item=String>>(id: String, neighbors: I) -> BaseNode {
+        let reader = UnixStream::connect(&id).unwrap();
+        let writer = reader.try_clone().unwrap();
         BaseNode {
             id: NodeId::from(id.borrow()),
             current_term: 0,
@@ -70,7 +78,8 @@ impl BaseNode {
             commit_idx: 0,
             last_applied: 0,
             neighbors: neighbors.map(NodeId::from).collect(),
-            port: cell::RefCell::new(UnixStream::connect(id).unwrap()),
+            reader: Some(reader),
+            writer: cell::RefCell::new(writer),
             state_machine: HashMap::new(),
         }
     }
@@ -122,3 +131,35 @@ impl From<String> for NodeId {
     }
 }
 
+struct Split<I, F> {
+    iter: I,
+    f: F,
+}
+
+trait Splittable<R> : Iterator<Item=R> + Sized {
+
+    fn split<F>(self, f: F) -> Split<Self, F> 
+        where F: FnMut(&R) -> bool;
+}
+
+impl <I: Iterator, F>Iterator for Split<I, F> where F: FnMut(&I::Item) -> bool {
+    type Item = Vec<I::Item>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut out = vec![];
+        for item in self.iter.by_ref() {
+            if (self.f)(&item) {
+                out.push(item);
+            } else {
+                return Some(out);
+            }
+        }
+        None
+    }
+}
+
+impl <R, I: Iterator<Item=R>>Splittable<R> for I {
+    fn split<F>(self, f: F) -> Split<Self, F> 
+        where F: FnMut(&R) -> bool {
+            Split{ iter: self, f: f }
+    }
+}
