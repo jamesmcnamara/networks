@@ -11,6 +11,7 @@ pub mod node;
 pub mod port;
 
 use std::env;
+use std::thread;
 use std::sync::mpsc;
 
 use unix_socket::UnixStream;
@@ -31,6 +32,7 @@ fn main() {
     let left_sock = right_sock.try_clone().unwrap();
 
     let port = Port::new(right_sock, sender);
+    thread::spawn(move || port.relay());
     let mut node = Node::new(receiver, left_sock, my_id, args); 
     node.main();    
 }
