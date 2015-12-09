@@ -5,6 +5,7 @@ authors = ["jamesmcnamara <jamesscottmcnamara@gmail.com>"]
 
 [dependencies]
 rustc-serialize = "0.3"
+rand = "0.3"
 itertools = "0.4.1"
 schedule_recv = "0.0.1"
 time = "0.1.33"
