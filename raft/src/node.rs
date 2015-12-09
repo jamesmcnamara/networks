@@ -15,6 +15,12 @@ use unix_socket::UnixStream;
 
 use super::msg::{BaseMsg, Entry, InternalMsg, Msg, MsgType};
 
+enum SelResult {
+    Timeout,
+    ClientMsg,
+    NodeMsg,
+}
+
 pub struct Node {
     base: BaseNode,
     node_type: NodeType,
@@ -29,28 +35,41 @@ impl Node {
     }
 
     pub fn main(mut self) {
+        let mut rng = thread_rng();
+        let mut timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
         loop {
-            let mut rng = thread_rng();
+            let res;
             {
                 let chan = &self.base.reader;
-                let mut timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
-                select! {
-                    msg = chan.recv() => {
-                        self.handle_message(msg.unwrap());
-                        continue;
-                    },
-                    _   = timer.recv() => ()
-                }
+                res = select! {
+                    msg = chan.recv() => self.handle_message(msg.unwrap()),
+                    _   = timer.recv() => SelResult::Timeout
+                };
             }
-            self.into_candidate() 
+            match res {
+                SelResult::Timeout => {
+                    self.into_candidate();
+                    timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
+                },
+                SelResult::NodeMsg => {
+                    timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
+                },
+                SelResult::ClientMsg => (),
+            }
         }
 
     }
 
-    fn handle_message(&self, mut msg: Msg) {
+    fn handle_message(&self, mut msg: Msg) -> SelResult {
+        let res = match msg.msg {
+            MsgType::Get(_) | MsgType::Put(..) => SelResult::ClientMsg,
+            _ => SelResult::NodeMsg,
+        };
         mem::swap(&mut msg.base.src, &mut msg.base.dst);
         mem::replace(&mut msg.msg, MsgType::Fail);
-        self.send(msg);
+        self.send(&msg);
+
+        res
     }
 
     fn into_candidate(&mut self) {
@@ -87,11 +106,11 @@ impl Node {
             },
         };
 
-        self.send(rv)
+        self.send(&rv)
     }
 
 
-    fn send(&self, msg: Msg) {
+    fn send(&self, msg: &Msg) {
         (*self.base.writer.borrow_mut())
             .write_all((encode(&msg.to_json()).unwrap() + "\n").as_bytes())
             .unwrap()
