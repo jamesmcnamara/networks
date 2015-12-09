@@ -27,7 +27,9 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new<I: Iterator<Item=String>>(reader: mpsc::Receiver<Msg>, socket: UnixStream, id: String, neighbors: I) -> Node {
+    pub fn new<I>(reader: mpsc::Receiver<Msg>, socket: UnixStream, id: String, neighbors: I) -> Node
+        where I: Iterator<Item=String>
+    {
         Node {
             base: BaseNode::new(reader, socket, id, neighbors),
             node_type: NodeType::Follower,
@@ -60,10 +62,10 @@ impl Node {
 
     fn handle_message(&self, mut msg: Msg) -> SelResult {
         let res = match msg.msg {
-            MsgType::Get(_) 
-                | MsgType::Put(..) 
-                | MsgType::OK 
-                | MsgType::Redirect 
+            MsgType::Get(_)
+                | MsgType::Put(..)
+                | MsgType::OK
+                | MsgType::Redirect
                 | MsgType::Fail => SelResult::ClientMsg,
             _  => SelResult::NodeMsg,
         };
@@ -133,7 +135,9 @@ struct BaseNode {
 }
 
 impl BaseNode {
-    fn new<I: Iterator<Item=String>>(reader: mpsc::Receiver<Msg>, writer: UnixStream, id: String, neighbors: I) -> BaseNode {
+    fn new<I>(reader: mpsc::Receiver<Msg>, writer: UnixStream, id: String, neighbors: I) -> BaseNode
+        where I: Iterator<Item=String>
+    {
         BaseNode {
             id: NodeId::from(id.borrow()),
             current_term: 0,

@@ -46,7 +46,7 @@ impl ToJson for Msg {
         let mut d = BTreeMap::new();
         self.base.fill(&mut d);
         self.msg.fill(&mut d);
-        
+
         Json::Object(d)
     }
 }
@@ -96,7 +96,7 @@ pub enum MsgType {
     Redirect,
     Get(String),
     Put(String, String),
-    AppendEntries { 
+    AppendEntries {
         details: InternalMsg,
         leader_commit: u64,
         entries: Option<Vec<Entry>> },
@@ -110,7 +110,7 @@ pub enum MsgType {
         details: InternalMsg,
         candidate_id: NodeId,
     },
-    RVResp(u64, bool), 
+    RVResp(u64, bool),
 }
 
 impl MsgType {
@@ -162,20 +162,17 @@ impl MsgType {
     fn parse_append_entries(json: &Json) -> MsgType {
         let int_msg = InternalMsg::from(json);
         let obj = json.as_object().expect("parse_append_entries expects a JSON object");
-        let entries = if let Some(entries) = obj.get("entries") {
-            let entries = entries.as_array()
-                .expect("entries must be an array")
-                .iter()
-                .map(|entry| Entry::from(entry))
-                .collect();
-
-            Some(entries)
-        } else {
-            None
-        };
+        let entries = obj
+            .get("entries")
+            .map(|entries| entries
+                 .as_array()
+                 .expect("entries must be an array")
+                 .iter()
+                 .map(Entry::from)
+                 .collect());
 
         MsgType::AppendEntries {
-            details: int_msg, 
+            details: int_msg,
             leader_commit: get!(json -> "leader_commit"; Json::as_u64),
             entries: entries
         }
@@ -194,13 +191,13 @@ impl MsgType {
                 .get("first_entry_of_term")
                 .map(Json::as_u64)
                 .unwrap(),
-        }        
+        }
     }
 
     fn parse_request_vote(obj: &Json) -> MsgType {
         let int_msg = InternalMsg::from(obj);
         MsgType::RequestVote{
-            details: int_msg, 
+            details: int_msg,
             candidate_id: get!(obj -> "candidate_id"; NodeId::as_node_id)
         }
     }
@@ -227,9 +224,9 @@ impl <'a>From<&'a Json> for MsgType {
 
 #[derive(PartialEq, Debug)]
 pub struct InternalMsg {
-    pub term: u64, 
-    pub last_entry: u64, 
-    pub last_entry_term: u64, 
+    pub term: u64,
+    pub last_entry: u64,
+    pub last_entry_term: u64,
 }
 
 impl InternalMsg {
@@ -313,7 +310,7 @@ fn s(string: &str) -> String {
 fn test_msg_serialize() {
     let get = MsgType::Get(s("hello"));
     let base = BaseMsg {
-        src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]), 
+        src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]),
         dst: NodeId(['0' as u8, '0' as u8, '1' as u8, 'E' as u8]),
         leader: NodeId(['A' as u8, 'A' as u8, '4' as u8, '3' as u8]),
         mid: s("BABADOOK")
@@ -326,13 +323,13 @@ fn test_msg_serialize() {
 fn test_internal_msg_serialize() {
     let details = InternalMsg{ term: 4, last_entry_term: 3, last_entry: 213 };
     let append = MsgType::AppendEntries {
-        details: details, 
+        details: details,
         leader_commit: 5,
         entries: Some(vec![Entry::new("x", "13", 1), Entry::new("y","27", 1)]),
     };
 
     let base = BaseMsg {
-        src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]), 
+        src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]),
         dst: NodeId(['0' as u8, '0' as u8, '1' as u8, 'E' as u8]),
         leader: NodeId(['A' as u8, 'A' as u8, '4' as u8, '3' as u8]),
         mid: s("BABADOOK")
@@ -350,7 +347,7 @@ fn test_internal_msg_serialize() {
 fn test_msg_deserialize() {
     let msg = "{\"dst\":\"001E\",\"leader\":\"AA43\",\"MID\":\"BABADOOK\",\"src\":\"13AE\",\"type\":\"ok\"}";
     let base = BaseMsg {
-        src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]), 
+        src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]),
         dst: NodeId(['0' as u8, '0' as u8, '1' as u8, 'E' as u8]),
         leader: NodeId(['A' as u8, 'A' as u8, '4' as u8, '3' as u8]),
         mid: s("BABADOOK")
@@ -364,12 +361,12 @@ fn test_int_msg_deserialize() {
     let details = InternalMsg{ term: 4, last_entry_term: 3, last_entry: 213 };
     let append = MsgType::AppendEntries {
         leader_commit: 5,
-        details: details, 
+        details: details,
         entries: Some(vec![Entry::new("x", "13", 1), Entry::new("y","27", 1)]),
     };
 
     let base = BaseMsg {
-        src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]), 
+        src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]),
         dst: NodeId(['0' as u8, '0' as u8, '1' as u8, 'E' as u8]),
         leader: NodeId(['A' as u8, 'A' as u8, '4' as u8, '3' as u8]),
         mid: s("BABADOOK")

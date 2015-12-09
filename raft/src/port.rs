@@ -61,7 +61,6 @@ impl <I: Iterator, F>Iterator for Split<I, F> where F: FnMut(&I::Item) -> bool {
 }
 
 trait Splittable<R> : Iterator<Item=R> + Sized {
-
     fn split<F>(self, f: F) -> Split<Self, F>
         where F: FnMut(&R) -> bool;
 }
