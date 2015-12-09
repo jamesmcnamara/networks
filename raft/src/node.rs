@@ -33,7 +33,7 @@ impl Node {
             let mut rng = thread_rng();
             {
                 let chan = &self.base.reader;
-                let timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
+                let mut timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
                 select! {
                     msg = chan.recv() => {
                         self.handle_message(msg.unwrap());
@@ -93,7 +93,7 @@ impl Node {
 
     fn send(&self, msg: Msg) {
         (*self.base.writer.borrow_mut())
-            .write_all(encode(&msg.to_json()).unwrap().as_bytes())
+            .write_all((encode(&msg.to_json()).unwrap() + "\n").as_bytes())
             .unwrap()
     }
 }
