@@ -21,7 +21,7 @@ impl Port {
 
     pub fn relay(mut self) {
         let reader = mem::replace(&mut self.socket, None).unwrap();
-        let msgs = reader.bytes() 
+        let msgs = reader.bytes()
             .map(Result::unwrap)
             .split(|byte| '\n' != *byte as char);
         for byte_block in msgs {
@@ -62,12 +62,12 @@ impl <I: Iterator, F>Iterator for Split<I, F> where F: FnMut(&I::Item) -> bool {
 
 trait Splittable<R> : Iterator<Item=R> + Sized {
 
-    fn split<F>(self, f: F) -> Split<Self, F> 
+    fn split<F>(self, f: F) -> Split<Self, F>
         where F: FnMut(&R) -> bool;
 }
 
 impl <R, I: Iterator<Item=R>>Splittable<R> for I {
-    fn split<F>(self, f: F) -> Split<Self, F> 
+    fn split<F>(self, f: F) -> Split<Self, F>
         where F: FnMut(&R) -> bool {
             Split{ iter: self, f: f }
     }

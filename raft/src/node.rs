@@ -90,19 +90,19 @@ impl Node {
             .last()
             .map_or(self.base.current_term, |entry| entry.term);
 
-        let details = InternalMsg::new(self.base.current_term, 
+        let details = InternalMsg::new(self.base.current_term,
                                        self.base.log.len() as u64,
                                        last_entry_term);
 
         let base = BaseMsg::new(self.base.id,
-                                to, 
-                                NodeId::broadcast(), 
-                                "rv".to_owned()); 
+                                to,
+                                NodeId::broadcast(),
+                                "rv".to_owned());
         let rv = Msg {
             base: base,
             msg: MsgType::RequestVote {
                details: details,
-               candidate_id: self.base.id, 
+               candidate_id: self.base.id,
             },
         };
 
@@ -164,7 +164,7 @@ impl NodeId {
         NodeId::from_bytes(json
                            .as_string()
                            .expect("node id must be string")
-                           .as_bytes()) 
+                           .as_bytes())
     }
 
     fn from_bytes(bytes: &[u8]) -> Option<NodeId> {
@@ -173,7 +173,7 @@ impl NodeId {
             _            => None,
         }
     }
-    
+
     fn broadcast() -> NodeId {
         NodeId(['F' as u8, 'F' as u8, 'F' as u8, 'F' as u8])
     }
