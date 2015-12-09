@@ -33,7 +33,7 @@ impl Port {
     }
 
     fn handle_message(&self, req: String) {
-        println!("message is {}", req);
+        //println!("message is {}", req);
         let mut msg = Msg::from_str(&req);
         self.sender.send(msg);
     }

@@ -38,15 +38,13 @@ impl Node {
         let mut rng = thread_rng();
         let mut timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
         loop {
-            let res;
-            {
+            match {
                 let chan = &self.base.reader;
-                res = select! {
+                select! {
                     msg = chan.recv() => self.handle_message(msg.unwrap()),
                     _   = timer.recv() => SelResult::Timeout
-                };
-            }
-            match res {
+                }
+            } {
                 SelResult::Timeout => {
                     self.into_candidate();
                     timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
@@ -62,8 +60,12 @@ impl Node {
 
     fn handle_message(&self, mut msg: Msg) -> SelResult {
         let res = match msg.msg {
-            MsgType::Get(_) | MsgType::Put(..) => SelResult::ClientMsg,
-            _ => SelResult::NodeMsg,
+            MsgType::Get(_) 
+                | MsgType::Put(..) 
+                | MsgType::OK 
+                | MsgType::Redirect 
+                | MsgType::Fail => SelResult::ClientMsg,
+            _  => SelResult::NodeMsg,
         };
         mem::swap(&mut msg.base.src, &mut msg.base.dst);
         mem::replace(&mut msg.msg, MsgType::Fail);
