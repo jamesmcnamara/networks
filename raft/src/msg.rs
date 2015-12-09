@@ -23,6 +23,13 @@ pub struct Msg {
 }
 
 impl Msg {
+    pub fn new(base: BaseMsg, typ: MsgType) -> Msg {
+        Msg {
+            base: base,
+            msg: typ,
+        }
+    }
+
     pub fn from_str(s: &str) -> Msg {
         let raw = Json::from_str(s)
             .ok()
@@ -53,6 +60,15 @@ pub struct BaseMsg {
 }
 
 impl BaseMsg {
+    pub fn new(src: NodeId, dst: NodeId, leader: NodeId, mid: String) -> BaseMsg {
+        BaseMsg {
+            src: src,
+            dst: dst,
+            leader: leader,
+            mid: mid
+        }
+    }
+
     fn fill(&self, d: &mut Object) {
         d.add_json("src", self.src);
         d.add_json("dst", self.dst);
@@ -92,7 +108,7 @@ pub enum MsgType {
     },
     RequestVote {
         details: InternalMsg,
-        candidate_id: u64,
+        candidate_id: NodeId,
     },
     RVResp(u64, bool), 
 }
@@ -185,7 +201,7 @@ impl MsgType {
         let int_msg = InternalMsg::from(obj);
         MsgType::RequestVote{
             details: int_msg, 
-            candidate_id: get!(obj -> "candidate_id"; Json::as_u64)
+            candidate_id: get!(obj -> "candidate_id"; NodeId::as_node_id)
         }
     }
 }
@@ -217,6 +233,14 @@ pub struct InternalMsg {
 }
 
 impl InternalMsg {
+    pub fn new(term: u64, last_entry: u64, last_entry_term: u64) -> InternalMsg {
+        InternalMsg {
+            term: term,
+            last_entry: last_entry,
+            last_entry_term: last_entry_term,
+        }
+    }
+
     fn fill(&self, d: &mut Object) {
         d.add_json("term", self.term);
         d.add_json("last_entry", self.last_entry);

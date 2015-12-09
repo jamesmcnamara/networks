@@ -13,7 +13,7 @@ use rustc_serialize::json::{encode, Json, ToJson};
 use schedule_recv::oneshot_ms;
 use unix_socket::UnixStream;
 
-use super::msg::{Msg, MsgType, Entry};
+use super::msg::{BaseMsg, Entry, InternalMsg, Msg, MsgType};
 
 pub struct Node {
     base: BaseNode,
@@ -54,8 +54,42 @@ impl Node {
     }
 
     fn into_candidate(&mut self) {
-
+        println!("{:?} is becoming a candidate", self.base.id);
+        mem::replace(&mut self.node_type, NodeType::Candidate);
+        self.base.current_term += 1;
+        self.base.voted_for = Some(self.base.id);
+        for node in &self.base.neighbors {
+            self.send_request_vote(*node);
+        }
     }
+
+
+    fn send_request_vote(&self, to: NodeId) {
+        let last_entry_term = self
+            .base
+            .log
+            .last()
+            .map_or(self.base.current_term, |entry| entry.term);
+
+        let details = InternalMsg::new(self.base.current_term, 
+                                       self.base.log.len() as u64,
+                                       last_entry_term);
+
+        let base = BaseMsg::new(self.base.id,
+                                to, 
+                                NodeId::broadcast(), 
+                                "rv".to_owned()); 
+        let rv = Msg {
+            base: base,
+            msg: MsgType::RequestVote {
+               details: details,
+               candidate_id: self.base.id, 
+            },
+        };
+
+        self.send(rv)
+    }
+
 
     fn send(&self, msg: Msg) {
         (*self.base.writer.borrow_mut())
@@ -66,11 +100,11 @@ impl Node {
 
 struct BaseNode {
     id: NodeId,
-    current_term: usize,
+    current_term: u64,
     voted_for: Option<NodeId>,
     log: Vec<Entry>,
-    commit_idx: usize,
-    last_applied: usize,
+    commit_idx: u64,
+    last_applied: u64,
     neighbors: Vec<NodeId>,
     reader: mpsc::Receiver<Msg>,
     writer: cell::RefCell<UnixStream>,
@@ -119,6 +153,10 @@ impl NodeId {
             [a, b, c, d] => Some(NodeId([a, b, c, d])),
             _            => None,
         }
+    }
+    
+    fn broadcast() -> NodeId {
+        NodeId(['F' as u8, 'F' as u8, 'F' as u8, 'F' as u8])
     }
 }
 
