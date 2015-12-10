@@ -64,7 +64,7 @@ impl Node {
         let res = match msg.msg {
             MsgType::Get(_)
                 | MsgType::Put(..)
-                | MsgType::OK
+                | MsgType::OK(_)
                 | MsgType::Redirect
                 | MsgType::Fail => SelResult::ClientMsg,
             _  => SelResult::NodeMsg,

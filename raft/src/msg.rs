@@ -91,9 +91,9 @@ impl <'a>From<&'a Json> for BaseMsg {
 
 #[derive(PartialEq, Debug)]
 pub enum MsgType {
-    OK,
     Fail,
     Redirect,
+    OK(String),
     Get(String),
     Put(String, String),
     AppendEntries {
@@ -117,7 +117,8 @@ impl MsgType {
     fn fill(&self, d: &mut Object) {
         d.add_json("type", self.name().to_owned());
         match *self {
-            MsgType::OK | MsgType::Fail | MsgType::Redirect => return,
+            MsgType::Fail | MsgType::Redirect => return,
+            MsgType::OK(ref value) => d.add_json("value", value.to_owned()),
             MsgType::Get(ref key) => d.add_json("key", key.to_owned()),
             MsgType::Put(ref key, ref val) => {
                 d.add_json("key", key.to_owned());
@@ -147,9 +148,9 @@ impl MsgType {
 
     fn name(&self) -> &'static str {
         match *self {
-            MsgType::OK => "ok",
             MsgType::Fail => "fail",
             MsgType::Redirect => "redirect",
+            MsgType::OK(_) => "ok",
             MsgType::Get(_) => "get",
             MsgType::Put(..) => "put",
             MsgType::AppendEntries{ .. } => "append_entries",
@@ -206,9 +207,9 @@ impl MsgType {
 impl <'a>From<&'a Json> for MsgType {
     fn from(obj: &'a Json) -> MsgType {
         match get!(obj -> "type"; Json::as_string) {
-            "ok" => MsgType::OK,
             "fail" => MsgType::Fail,
             "redirect" => MsgType::Redirect,
+            "ok" => MsgType::OK(get!(obj -> "value"; Json::as_string).to_owned()),
             "get" => MsgType::Get(get!(obj -> "key"; Json::as_string).to_owned()),
             "put" => MsgType::Put(get!(obj -> "key"; Json::as_string).to_owned(),
                                   get!(obj -> "value";Json::as_string).to_owned()),
@@ -345,14 +346,14 @@ fn test_internal_msg_serialize() {
 
 #[test]
 fn test_msg_deserialize() {
-    let msg = "{\"dst\":\"001E\",\"leader\":\"AA43\",\"MID\":\"BABADOOK\",\"src\":\"13AE\",\"type\":\"ok\"}";
+    let msg = "{\"dst\":\"001E\",\"leader\":\"AA43\",\"MID\":\"BABADOOK\",\"src\":\"13AE\",\"type\":\"ok\",\"value\":\"blah\"}";
     let base = BaseMsg {
         src: NodeId(['1' as u8, '3' as u8, 'A' as u8, 'E' as u8]),
         dst: NodeId(['0' as u8, '0' as u8, '1' as u8, 'E' as u8]),
         leader: NodeId(['A' as u8, 'A' as u8, '4' as u8, '3' as u8]),
         mid: s("BABADOOK")
     };
-    let msg_type = MsgType::OK;
+    let msg_type = MsgType::OK(s("blah"));
     assert_eq!(Msg {base: base, msg: msg_type}, Msg::from_str(msg));
 }
 
