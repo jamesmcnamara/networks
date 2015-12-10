@@ -16,7 +16,7 @@ macro_rules! get {
     }}
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Msg {
     pub base: BaseMsg,
     pub msg: MsgType,
@@ -51,7 +51,7 @@ impl ToJson for Msg {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct BaseMsg {
     pub src: NodeId,
     pub dst: NodeId,
@@ -89,7 +89,7 @@ impl <'a>From<&'a Json> for BaseMsg {
 }
 
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum MsgType {
     Fail,
     Redirect,
@@ -223,7 +223,7 @@ impl <'a>From<&'a Json> for MsgType {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct InternalMsg {
     pub term: u64,
     pub last_entry: u64,

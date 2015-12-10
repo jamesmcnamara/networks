@@ -60,20 +60,43 @@ impl Node {
 
     }
 
-    fn handle_message(&self, mut msg: Msg) -> SelResult {
-        let res = match msg.msg {
-            MsgType::Get(_)
-                | MsgType::Put(..)
+    fn handle_message(&mut self, mut msg: Msg) -> SelResult {
+        mem::swap(&mut msg.base.src, &mut msg.base.dst);
+        match msg.msg.clone() {
+            MsgType::Get(ref key) => {
+                if let NodeType::Leader { .. } = self.node_type {
+                    let value = self.base.state_machine.get(key).expect("Key not found");
+                    msg.msg = MsgType::OK(value.clone())
+                } else {
+                    msg.msg = MsgType::Redirect
+                }
+                self.send(&msg);
+                SelResult::ClientMsg
+            },
+            MsgType::RequestVote { details, candidate_id } => {
+                let grant_vote;
+                let further_ahead = details.term > self.base.current_term
+                    && details.last_entry >= self.base.log.len() as u64
+                        && details.last_entry_term == self.base.log.last().map_or(0, |entry| entry.term);
+                if further_ahead {
+                    grant_vote = self.base.voted_for
+                        .map_or(false, |candidate| candidate == candidate_id);
+
+                    if grant_vote {
+                        self.base.voted_for = Some(candidate_id);
+                    }
+                }
+                MsgType::RVResp(self.base.current_term, grant_vote);
+                self.send(&msg);
+
+                SelResult::NodeMsg
+            },
+            MsgType::Put(..)
                 | MsgType::OK(_)
                 | MsgType::Redirect
                 | MsgType::Fail => SelResult::ClientMsg,
             _  => SelResult::NodeMsg,
-        };
-        mem::swap(&mut msg.base.src, &mut msg.base.dst);
-        mem::replace(&mut msg.msg, MsgType::Fail);
-        self.send(&msg);
-
-        res
+        }
     }
 
     fn into_candidate(&mut self) {
@@ -85,7 +108,6 @@ impl Node {
             self.send_request_vote(*node);
         }
     }
-
 
     fn send_request_vote(&self, to: NodeId) {
         let last_entry_term = self
