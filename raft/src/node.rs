@@ -43,7 +43,10 @@ impl Node {
             match {
                 let chan = &self.base.reader;
                 select! {
-                    msg = chan.recv() => self.classify(msg.unwrap()),
+                    msg = chan.recv() => match msg {
+                        Ok(msg) => self.classify(msg),
+                        Err(_)  => return,
+                    },
                     _   = timer.recv() => MsgClass::Timeout
                 }
             } {
@@ -154,7 +157,9 @@ impl Node {
             },
 
             MsgType::AEResp { term, success, conflicting_term, first_entry_of_term } => {
-                
+                if success {
+
+                }
             },
 
             _ => unreachable!("unrecognized node message: {}", msg.msg.name())
@@ -181,12 +186,14 @@ impl Node {
             },
             MsgType::Put(key, value) => {
                 outgoing.msg = if let NodeType::Leader { .. } = self.node_type {
-                    self.base.log.push(Entry { 
+                    let entry = Entry { 
                         key: key.clone(), 
                         value: value.clone(), 
                         term: self.base.current_term
-                    });
-                    self.base.state_machine.insert(key, value.clone());
+                    };
+                    self.base.log.push(entry.clone());
+                    self.send_append_entries(entry);
+
                     MsgType::OK(value)
                 } else {
                     MsgType::Redirect
@@ -239,27 +246,8 @@ impl Node {
         mem::replace(&mut self.node_type, NodeType::Candidate(votes));
         self.base.current_term += 1;
         self.base.voted_for = Some(self.base.id);
-        for node in &self.base.neighbors {
-            self.send_request_vote(*node);
-        }
-    }
 
-    fn send_request_vote(&self, to: NodeId) {
-        let details = self.make_details();
-
-        let base = BaseMsg::new(self.base.id,
-                                to,
-                                NodeId::broadcast(),
-                                "rv".to_owned());
-        let rv = Msg {
-            base: base,
-            msg: MsgType::RequestVote {
-               details: details,
-               candidate_id: self.base.id,
-            },
-        };
-
-        self.send(&rv)
+        self.send_request_vote()
     }
 
 
@@ -280,13 +268,33 @@ impl Node {
         self.send_heartbeat();
     }
 
+    fn send_request_vote(&self) {
+        let details = self.make_details();
+        for to in &self.base.neighbors {
+            let base = BaseMsg::new(self.base.id,
+                                    *to,
+                                    self.base.leader, 
+                                    "rv".to_owned());
+            let rv = Msg {
+                base: base,
+                msg: MsgType::RequestVote {
+                   details: details.clone(),
+                   candidate_id: self.base.id,
+                },
+            };
+
+            self.send(&rv)
+        }
+    }
+
+
     fn send_heartbeat(&self) {
         if let NodeType::Leader {..} = self.node_type {
             let details = self.make_details();
             for node in &self.base.neighbors {
                 let base = BaseMsg::new(self.base.id,
                                         *node,
-                                        NodeId::broadcast(),
+                                        self.base.leader, 
                                         "append".to_owned());
                 let heartbeat = Msg {
                     base: base,
@@ -298,6 +306,28 @@ impl Node {
                 };
                
                 self.send(&heartbeat);
+            }
+        }
+    }
+
+    fn send_append_entries(&self, entry: Entry) {
+        if let NodeType::Leader {..} = self.node_type {
+            let details = self.make_details();
+            for node in &self.base.neighbors {
+                let base = BaseMsg::new(self.base.id,
+                                        *node,
+                                        self.base.leader, 
+                                        "append".to_owned());
+                let append = Msg {
+                    base: base,
+                    msg: MsgType::AppendEntries {
+                       details: details.clone(),
+                       leader_commit: self.base.commit_idx,
+                       entries: Some(vec![entry.clone()]),
+                    },
+                };
+               
+                self.send(&append);
             }
         }
     }
@@ -315,9 +345,8 @@ impl Node {
     }
 
     fn send(&self, msg: &Msg) {
-        (*self.base.writer.borrow_mut())
-            .write_all((encode(&msg.to_json()).unwrap() + "\n").as_bytes())
-            .unwrap()
+        drop((*self.base.writer.borrow_mut())
+            .write_all((encode(&msg.to_json()).unwrap() + "\n").as_bytes()))
     }
 }
 
