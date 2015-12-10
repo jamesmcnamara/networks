@@ -33,6 +33,6 @@ fn main() {
 
     let port = Port::new(right_sock, sender);
     thread::spawn(move || port.relay());
-    let mut node = Node::new(receiver, left_sock, my_id, args);
+    let node = Node::new(receiver, left_sock, my_id, args);
     node.main();
 }

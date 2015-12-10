@@ -4,7 +4,7 @@ use std::sync::mpsc;
 
 use unix_socket::UnixStream;
 
-use super::msg::{Msg, MsgType, Entry};
+use super::msg::Msg;
 
 pub struct Port {
     socket: Option<UnixStream>,
@@ -34,8 +34,8 @@ impl Port {
 
     fn handle_message(&self, req: String) {
         //println!("message is {}", req);
-        let mut msg = Msg::from_str(&req);
-        self.sender.send(msg);
+        let msg = Msg::from_str(&req);
+        drop(self.sender.send(msg));
     }
 }
 

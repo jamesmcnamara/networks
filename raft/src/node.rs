@@ -1,24 +1,24 @@
 use std::borrow::Borrow;
 use std::cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::From;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::mem;
 use std::str::from_utf8;
 use std::sync::mpsc;
 
-use itertools::Itertools;
-use rand::{Rng, thread_rng};
+use rand;
+use rand::Rng;
 use rustc_serialize::json::{encode, Json, ToJson};
 use schedule_recv::oneshot_ms;
 use unix_socket::UnixStream;
 
 use super::msg::{BaseMsg, Entry, InternalMsg, Msg, MsgType};
 
-enum SelResult {
+enum MsgClass {
     Timeout,
-    ClientMsg,
-    NodeMsg,
+    Client(Msg),
+    Node(Msg),
 }
 
 pub struct Node {
@@ -37,71 +37,206 @@ impl Node {
     }
 
     pub fn main(mut self) {
-        let mut rng = thread_rng();
-        let mut timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
+        let mut rng = rand::thread_rng();
+        let mut timer = self.reset_timer(&mut rng);
         loop {
             match {
                 let chan = &self.base.reader;
                 select! {
-                    msg = chan.recv() => self.handle_message(msg.unwrap()),
-                    _   = timer.recv() => SelResult::Timeout
+                    msg = chan.recv() => self.classify(msg.unwrap()),
+                    _   = timer.recv() => MsgClass::Timeout
                 }
             } {
-                SelResult::Timeout => {
-                    self.into_candidate();
-                    timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
+                MsgClass::Timeout => {
+                    if let NodeType::Leader{ .. } = self.node_type {
+                        timer = self.reset_timer(&mut rng);
+                        self.send_heartbeat();
+                    } else {
+                        self.into_candidate();
+                        timer = self.reset_timer(&mut rng);
+                    }
                 },
-                SelResult::NodeMsg => {
-                    timer = oneshot_ms(150 + (rng.gen::<u32>() % 150u32));
+                MsgClass::Node(msg) => {
+                    self.handle_node(msg);
+                    timer = self.reset_timer(&mut rng);
                 },
-                SelResult::ClientMsg => (),
+                MsgClass::Client(msg) => {
+                    self.handle_client(msg);
+                },
             }
         }
-
     }
 
-    fn handle_message(&mut self, mut msg: Msg) -> SelResult {
-        mem::swap(&mut msg.base.src, &mut msg.base.dst);
-        match msg.msg.clone() {
-            MsgType::Get(ref key) => {
-                if let NodeType::Leader { .. } = self.node_type {
-                    let value = self.base.state_machine.get(key).expect("Key not found");
-                    msg.msg = MsgType::OK(value.clone())
-                } else {
-                    msg.msg = MsgType::Redirect
-                }
-                self.send(&msg);
-                SelResult::ClientMsg
-            },
-            MsgType::RequestVote { details, candidate_id } => {
-                let grant_vote;
-                let further_ahead = details.term > self.base.current_term
-                    && details.last_entry >= self.base.log.len() as u64
-                        && details.last_entry_term == self.base.log.last().map_or(0, |entry| entry.term);
-                if further_ahead {
-                    grant_vote = self.base.voted_for
-                        .map_or(false, |candidate| candidate == candidate_id);
 
-                    if grant_vote {
-                        self.base.voted_for = Some(candidate_id);
-                    }
-                }
-                MsgType::RVResp(self.base.current_term, grant_vote);
-                self.send(&msg);
+    fn reset_timer(&self, rng: &mut rand::ThreadRng) -> mpsc::Receiver<()> {
+        oneshot_ms(if let NodeType::Leader{..} = self.node_type {
+            100
+        } else {
+            150 + (rng.gen::<u32>() % 150u32)
+        })
+    }
 
-                SelResult::NodeMsg
-            },
-            MsgType::Put(..)
+    fn classify(&self, msg: Msg) -> MsgClass {
+        match msg.msg {
+            MsgType::Get(_) 
+                | MsgType::Put(..)
                 | MsgType::OK(_)
                 | MsgType::Redirect
-                | MsgType::Fail => SelResult::ClientMsg,
-            _  => SelResult::NodeMsg,
+                | MsgType::Fail => MsgClass::Client(msg),
+            _  => MsgClass::Node(msg),
         }
+    }
+
+    fn handle_node(&mut self, msg: Msg) {
+        let mut outgoing = msg.clone();
+        mem::swap(&mut outgoing.base.src, &mut outgoing.base.dst);
+        outgoing.base.leader = self.base.leader;
+        match msg.msg {
+            MsgType::RequestVote { details, candidate_id } => {
+                let ulysses_grant_vote = self.grant_vote(details, candidate_id);
+                if ulysses_grant_vote {
+                    //println!("{:?} is voting for {:?}", self.base.id, candidate_id);
+                    self.base.voted_for = Some(candidate_id);
+                }
+                outgoing.msg = MsgType::RVResp(self.base.current_term, ulysses_grant_vote);
+                self.send(&outgoing);
+            },
+
+            MsgType::RVResp(their_term, their_vote) => {
+                let leader = if let NodeType::Candidate(ref mut votes) = self.node_type {
+                    if their_vote {
+                       votes.insert(msg.base.src);
+                    }
+                    votes.len() > (self.base.neighbors.len() / 2)
+                } else {
+                    false
+                };
+
+                self.maybe_update_term(their_term);
+
+                if leader {
+                    self.into_leader()
+                }
+            },
+
+            MsgType::AppendEntries {details, leader_commit, entries} => {
+                outgoing.msg = if details.term < self.base.current_term {
+                    MsgType::AEResp {
+                       term: self.base.current_term,
+                       success: false,
+                       conflicting_term: None,
+                       first_entry_of_term: None,
+                    }
+                } else {
+                    self.maybe_update_term(details.term);
+                    self.node_type = NodeType::Follower;
+                    self.base.voted_for = None;
+                    self.base.leader = msg.base.leader;
+
+                    if self.logs_match(details) {
+                        MsgType::AEResp {
+                           term: self.base.current_term,
+                           success: true,
+                           conflicting_term: None,
+                           first_entry_of_term: None,
+                        }
+                    } else {
+                        MsgType::AEResp {
+                           term: self.base.current_term,
+                           success: false,
+                           conflicting_term: None,
+                           first_entry_of_term: None,
+                        }
+                    }
+                };
+
+                self.send(&outgoing);
+            },
+
+            MsgType::AEResp { term, success, conflicting_term, first_entry_of_term } => {
+                
+            },
+
+            _ => unreachable!("unrecognized node message: {}", msg.msg.name())
+        }
+    }
+
+    fn handle_client(&mut self, mut msg: Msg) {
+        let mut outgoing = msg.clone();
+        mem::swap(&mut outgoing.base.src, &mut outgoing.base.dst);
+        outgoing.base.leader = self.base.leader;
+        //println!("{:?} got client message: {}", self.base.id, msg.to_json());
+        match msg.msg {
+            MsgType::Get(key) => {
+                outgoing.msg = if let NodeType::Leader { .. } = self.node_type {
+                    match self.base.state_machine.get(&key) {
+                        Some(value) => MsgType::OK(value.clone()),
+                        None        => MsgType::Fail
+                    }
+                } else {
+                    MsgType::Redirect
+                };
+                //println!("{:?} response is {}", self.base.id, outgoing.to_json());
+                self.send(&outgoing);
+            },
+            MsgType::Put(key, value) => {
+                outgoing.msg = if let NodeType::Leader { .. } = self.node_type {
+                    self.base.log.push(Entry { 
+                        key: key.clone(), 
+                        value: value.clone(), 
+                        term: self.base.current_term
+                    });
+                    self.base.state_machine.insert(key, value.clone());
+                    MsgType::OK(value)
+                } else {
+                    MsgType::Redirect
+                };
+                //println!("{:?} response is {}", self.base.id, outgoing.to_json());
+                self.send(&outgoing);
+            },
+            MsgType::OK(_)
+                | MsgType::Redirect
+                | MsgType::Fail => (),
+            _ => unreachable!("unrecognized client message: {}", msg.msg.name())
+        }
+    }
+
+    fn maybe_update_term(&mut self, term: u64) {
+        if term > self.base.current_term {
+            self.base.current_term = term
+        }
+    }
+
+    fn grant_vote(&self, details: InternalMsg, candidate_id: NodeId) -> bool {
+        if details.term <= self.base.current_term {
+            //println!("term outdated. my term is {} but theres is {}", self.base.current_term, details.term);
+        }
+        if details.last_entry < self.base.log.len() as u64 {
+            //println!("log outdated. my log is {} but theres is {}", self.base.log.len(), details.last_entry);
+        }
+        if details.last_entry_term != self.base.log.last().map_or(0, |entry| entry.term) {
+            //println!("log term outdated. my log term is {} but theres is {}", self.base.log.last().map_or(0, |entry| entry.term), details.last_entry_term);
+        }
+        if self.base.voted_for.map_or(false, |candidate| candidate != candidate_id) {
+            //println!("im dumb!");
+        }
+
+        details.term > self.base.current_term
+            && self.logs_match(details)
+            && self.base.voted_for.map_or(true, |candidate| candidate == candidate_id)
+    }
+
+    fn logs_match(&self, details: InternalMsg) -> bool {
+        details.last_entry >= self.base.log.len() as u64
+            && details.last_entry_term == self.base.log.last().map_or(0, |entry| entry.term)
+
     }
 
     fn into_candidate(&mut self) {
-        println!("{:?} is becoming a candidate", self.base.id);
-        mem::replace(&mut self.node_type, NodeType::Candidate);
+        //println!("{:?} is becoming a candidate", self.base.id);
+        let mut votes = HashSet::new();
+        votes.insert(self.base.id);
+        mem::replace(&mut self.node_type, NodeType::Candidate(votes));
         self.base.current_term += 1;
         self.base.voted_for = Some(self.base.id);
         for node in &self.base.neighbors {
@@ -110,15 +245,7 @@ impl Node {
     }
 
     fn send_request_vote(&self, to: NodeId) {
-        let last_entry_term = self
-            .base
-            .log
-            .last()
-            .map_or(self.base.current_term, |entry| entry.term);
-
-        let details = InternalMsg::new(self.base.current_term,
-                                       self.base.log.len() as u64,
-                                       last_entry_term);
+        let details = self.make_details();
 
         let base = BaseMsg::new(self.base.id,
                                 to,
@@ -136,6 +263,57 @@ impl Node {
     }
 
 
+    fn into_leader(&mut self) {
+        //println!("{:?} IS THE LEADER", self.base.id);
+        self.base.leader = self.base.id;
+        let mut match_index = vec![];
+        let mut next_index = vec![];
+        for _ in 0..self.base.neighbors.len() {
+            match_index.push(self.base.log.len() + 1);
+            next_index.push(0);
+        }
+
+        mem::replace(&mut self.node_type, NodeType::Leader {
+            next_index: next_index, 
+            match_index: match_index});
+
+        self.send_heartbeat();
+    }
+
+    fn send_heartbeat(&self) {
+        if let NodeType::Leader {..} = self.node_type {
+            let details = self.make_details();
+            for node in &self.base.neighbors {
+                let base = BaseMsg::new(self.base.id,
+                                        *node,
+                                        NodeId::broadcast(),
+                                        "append".to_owned());
+                let heartbeat = Msg {
+                    base: base,
+                    msg: MsgType::AppendEntries {
+                       details: details.clone(),
+                       leader_commit: self.base.commit_idx,
+                       entries: None,
+                    },
+                };
+               
+                self.send(&heartbeat);
+            }
+        }
+    }
+
+    fn make_details(&self) -> InternalMsg {
+       let last_entry_term = self.base.log
+            .last()
+            .map_or(0, |entry| entry.term);
+
+       InternalMsg::new(self.base.current_term,
+                        self.base.log.len() as u64,
+                        last_entry_term)
+
+
+    }
+
     fn send(&self, msg: &Msg) {
         (*self.base.writer.borrow_mut())
             .write_all((encode(&msg.to_json()).unwrap() + "\n").as_bytes())
@@ -147,6 +325,7 @@ struct BaseNode {
     id: NodeId,
     current_term: u64,
     voted_for: Option<NodeId>,
+    leader: NodeId,
     log: Vec<Entry>,
     commit_idx: u64,
     last_applied: u64,
@@ -164,6 +343,7 @@ impl BaseNode {
             id: NodeId::from(id.borrow()),
             current_term: 0,
             voted_for: None,
+            leader: NodeId::broadcast(),
             log: vec![],
             commit_idx: 0,
             last_applied: 0,
@@ -177,14 +357,14 @@ impl BaseNode {
 
 enum NodeType {
     Follower,
-    Candidate,
+    Candidate(HashSet<NodeId>),
     Leader {
         next_index: Vec<usize>,
         match_index: Vec<usize>,
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub struct NodeId(pub [u8; 4]);
 
 impl NodeId {

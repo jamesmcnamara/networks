@@ -146,7 +146,7 @@ impl MsgType {
         }
     }
 
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match *self {
             MsgType::Fail => "fail",
             MsgType::Redirect => "redirect",
@@ -165,13 +165,17 @@ impl MsgType {
         let obj = json.as_object().expect("parse_append_entries expects a JSON object");
         let entries = obj
             .get("entries")
-            .map(|entries| entries
-                 .as_array()
-                 .expect("entries must be an array")
-                 .iter()
-                 .map(Entry::from)
-                 .collect());
-
+            .map_or(None, |entries| {
+                if entries.is_array() {
+                    Some(entries.as_array()
+                        .expect("entries must be an array") 
+                        .iter() 
+                        .map(Entry::from) 
+                        .collect())
+                } else {
+                    None   
+                }
+            }); 
         MsgType::AppendEntries {
             details: int_msg,
             leader_commit: get!(json -> "leader_commit"; Json::as_u64),
@@ -303,6 +307,7 @@ impl AddJson for Object {
     }
 }
 
+#[allow(dead_code)]
 fn s(string: &str) -> String {
     string.to_owned()
 }
