@@ -103,8 +103,8 @@ pub enum MsgType {
     AEResp {
         term: u64,
         success: bool,
+        entry: u64,
         conflicting_term: Option<u64>,
-        first_entry_of_term: Option<u64>,
     },
     RequestVote {
         details: InternalMsg,
@@ -129,11 +129,11 @@ impl MsgType {
                 d.add_json("leader_commit", leader_commit);
                 d.add_json("entries", entries.clone());
             },
-            MsgType::AEResp {term, success, conflicting_term, first_entry_of_term} => {
+            MsgType::AEResp {term, success, conflicting_term, entry} => {
                 d.add_json("term", term);
                 d.add_json("success", success);
                 d.add_json("conflicting_term", conflicting_term);
-                d.add_json("first_entry_of_term", first_entry_of_term);
+                d.add_json("entry", entry);
             },
             MsgType::RequestVote {ref details, ref candidate_id} => {
                 details.fill(d);
@@ -156,7 +156,7 @@ impl MsgType {
             MsgType::AppendEntries{ .. } => "append_entries",
             MsgType::AEResp { .. } => "ae_resp",
             MsgType::RequestVote{ .. } => "request_vote",
-            MsgType::RVResp(.. ) => "rv_resp",
+            MsgType::RVResp(..) => "rv_resp",
         }
     }
 
@@ -192,10 +192,11 @@ impl MsgType {
                 .get("conflicting_term")
                 .map(Json::as_u64)
                 .unwrap(),
-            first_entry_of_term: obj
-                .get("first_entry_of_term")
+            entry: obj
+                .get("entry")
                 .map(Json::as_u64)
-                .unwrap(),
+                .unwrap()
+                .unwrap()
         }
     }
 
@@ -260,7 +261,7 @@ impl <'a>From<&'a Json> for InternalMsg {
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub struct Entry {
     pub key: String,
     pub value: String,

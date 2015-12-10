@@ -7,6 +7,7 @@ use std::mem;
 use std::str::from_utf8;
 use std::sync::mpsc;
 
+use itertools::Itertools;
 use rand;
 use rand::Rng;
 use rustc_serialize::json::{encode, Json, ToJson};
@@ -128,7 +129,7 @@ impl Node {
                        term: self.base.current_term,
                        success: false,
                        conflicting_term: None,
-                       first_entry_of_term: None,
+                       entry: self.base.log.len() as u64,
                     }
                 } else {
                     self.maybe_update_term(details.term);
@@ -137,18 +138,24 @@ impl Node {
                     self.base.leader = msg.base.leader;
 
                     if self.logs_match(details) {
+                        if let Some(entries) = entries {
+                            self.base.log.extend(entries);
+                        }
+
+                        self.maybe_commit_logs(leader_commit);
+
                         MsgType::AEResp {
                            term: self.base.current_term,
                            success: true,
                            conflicting_term: None,
-                           first_entry_of_term: None,
+                           entry: self.base.log.len() as u64,
                         }
                     } else {
                         MsgType::AEResp {
                            term: self.base.current_term,
                            success: false,
                            conflicting_term: None,
-                           first_entry_of_term: None,
+                           entry: self.first_entry_of_term(),
                         }
                     }
                 };
@@ -156,10 +163,18 @@ impl Node {
                 self.send(&outgoing);
             },
 
-            MsgType::AEResp { term, success, conflicting_term, first_entry_of_term } => {
-                if success {
+            MsgType::AEResp { term, success, conflicting_term, entry } => {
+                if let NodeType::Leader {ref mut next_index, ref mut match_index, ..} = self.node_type {
+                    if success {
+                        match_index.insert(msg.base.src, entry);
+                        next_index.insert(msg.base.src, entry + 1);
+                        self.maybe_commit_logs(self.base.commit_idx);
+                    } else {
+                        next_index.insert(msg.base.src, entry - 1);
+                    }
 
                 }
+
             },
 
             _ => unreachable!("unrecognized node message: {}", msg.msg.name())
@@ -185,21 +200,20 @@ impl Node {
                 self.send(&outgoing);
             },
             MsgType::Put(key, value) => {
-                outgoing.msg = if let NodeType::Leader { .. } = self.node_type {
+                if let NodeType::Leader {ref mut outstanding, ..} = self.node_type {
                     let entry = Entry { 
                         key: key.clone(), 
                         value: value.clone(), 
                         term: self.base.current_term
                     };
                     self.base.log.push(entry.clone());
+                    outstanding.insert(entry.clone(), outgoing);
                     self.send_append_entries(entry);
-
-                    MsgType::OK(value)
                 } else {
-                    MsgType::Redirect
-                };
+                    outgoing.msg = MsgType::Redirect;
+                    self.send(&outgoing);
+                }
                 //println!("{:?} response is {}", self.base.id, outgoing.to_json());
-                self.send(&outgoing);
             },
             MsgType::OK(_)
                 | MsgType::Redirect
@@ -214,19 +228,50 @@ impl Node {
         }
     }
 
+    fn maybe_commit_logs(&mut self, leader_commit: u64) {
+        if let NodeType::Leader {ref mut match_index, ref mut outstanding, .. } = self.node_type {
+            let matches = match_index.values().collect_vec();
+            matches.sort();
+            let majority_idx = matches.len() / 2 - 1;
+            let committable = *(matches[majority_idx]);
+
+            if committable > leader_commit {
+                for entry in &self.base.log[leader_commit as usize .. committable as usize + 1] {
+                    self.commit(entry.clone());
+                    outstanding.remove(entry).map(|mut msg| {
+                        msg.msg = MsgType::OK(entry.value.clone());
+                        self.send(&msg);
+                    });
+                }
+               self.base.commit_idx = majority_idx as u64;
+            }
+        } else {
+            if leader_commit > self.base.commit_idx {
+                for entry in &self.base.log[self.base.commit_idx as usize .. leader_commit as usize + 1] {
+                    self.commit(entry.clone());
+                }
+                self.base.commit_idx = leader_commit;
+            }
+        }
+    }
+
+    fn commit(&mut self, entry: Entry) {
+        self.base.state_machine.insert(entry.key, entry.value);
+    }
+
     fn grant_vote(&self, details: InternalMsg, candidate_id: NodeId) -> bool {
-        if details.term <= self.base.current_term {
-            //println!("term outdated. my term is {} but theres is {}", self.base.current_term, details.term);
-        }
-        if details.last_entry < self.base.log.len() as u64 {
-            //println!("log outdated. my log is {} but theres is {}", self.base.log.len(), details.last_entry);
-        }
-        if details.last_entry_term != self.base.log.last().map_or(0, |entry| entry.term) {
-            //println!("log term outdated. my log term is {} but theres is {}", self.base.log.last().map_or(0, |entry| entry.term), details.last_entry_term);
-        }
-        if self.base.voted_for.map_or(false, |candidate| candidate != candidate_id) {
-            //println!("im dumb!");
-        }
+        // if details.term <= self.base.current_term {
+        //     //println!("term outdated. my term is {} but theres is {}", self.base.current_term, details.term);
+        // }
+        // if details.last_entry < self.base.log.len() as u64 {
+        //     //println!("log outdated. my log is {} but theres is {}", self.base.log.len(), details.last_entry);
+        // }
+        // if details.last_entry_term != self.base.log.last().map_or(0, |entry| entry.term) {
+        //     //println!("log term outdated. my log term is {} but theres is {}", self.base.log.last().map_or(0, |entry| entry.term), details.last_entry_term);
+        // }
+        // if self.base.voted_for.map_or(false, |candidate| candidate != candidate_id) {
+        //     //println!("im dumb!");
+        // }
 
         details.term > self.base.current_term
             && self.logs_match(details)
@@ -237,6 +282,10 @@ impl Node {
         details.last_entry >= self.base.log.len() as u64
             && details.last_entry_term == self.base.log.last().map_or(0, |entry| entry.term)
 
+    }
+
+    fn first_entry_of_term(&self) -> u64 {
+        0
     }
 
     fn into_candidate(&mut self) {
@@ -254,16 +303,18 @@ impl Node {
     fn into_leader(&mut self) {
         //println!("{:?} IS THE LEADER", self.base.id);
         self.base.leader = self.base.id;
-        let mut match_index = vec![];
-        let mut next_index = vec![];
-        for _ in 0..self.base.neighbors.len() {
-            match_index.push(self.base.log.len() + 1);
-            next_index.push(0);
+        let mut match_index = HashMap::new();
+        let mut next_index = HashMap::new();
+        for node in &self.base.neighbors {
+            match_index.insert(*node, self.base.log.len() as u64 + 1);
+            next_index.insert(*node, 0);
         }
 
         mem::replace(&mut self.node_type, NodeType::Leader {
             next_index: next_index, 
-            match_index: match_index});
+            match_index: match_index,
+            outstanding: HashMap::new()
+        });
 
         self.send_heartbeat();
     }
@@ -388,12 +439,13 @@ enum NodeType {
     Follower,
     Candidate(HashSet<NodeId>),
     Leader {
-        next_index: Vec<usize>,
-        match_index: Vec<usize>,
+        next_index: HashMap<NodeId, u64>,
+        match_index: HashMap<NodeId, u64>,
+        outstanding: HashMap<Entry, Msg>,
     }
 }
 
-#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
 pub struct NodeId(pub [u8; 4]);
 
 impl NodeId {
