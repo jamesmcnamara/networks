@@ -103,8 +103,7 @@ pub enum MsgType {
     AEResp {
         term: u64,
         success: bool,
-        entry: u64,
-        conflicting_term: Option<u64>,
+        match_index: u64,
     },
     RequestVote {
         details: InternalMsg,
@@ -129,11 +128,10 @@ impl MsgType {
                 d.add_json("leader_commit", leader_commit);
                 d.add_json("entries", entries.clone());
             },
-            MsgType::AEResp {term, success, conflicting_term, entry} => {
+            MsgType::AEResp {term, success, match_index} => {
                 d.add_json("term", term);
                 d.add_json("success", success);
-                d.add_json("conflicting_term", conflicting_term);
-                d.add_json("entry", entry);
+                d.add_json("match_index", match_index);
             },
             MsgType::RequestVote {ref details, ref candidate_id} => {
                 details.fill(d);
@@ -184,19 +182,10 @@ impl MsgType {
     }
 
     fn parse_ae_resp(json: &Json) -> MsgType {
-        let obj = json.as_object().expect("parse_ae_resp expects a JSON object");
         MsgType::AEResp {
             term: get!(json -> "term"; Json::as_u64),
             success: get!(json -> "success"; Json::as_boolean),
-            conflicting_term: obj
-                .get("conflicting_term")
-                .map(Json::as_u64)
-                .unwrap(),
-            entry: obj
-                .get("entry")
-                .map(Json::as_u64)
-                .unwrap()
-                .unwrap()
+            match_index: get!(json -> "match_index"; Json::as_u64),
         }
     }
 
