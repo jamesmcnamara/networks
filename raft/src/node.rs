@@ -76,7 +76,7 @@ impl Node {
 
     fn reset_timer(&self, rng: &mut rand::ThreadRng) -> mpsc::Receiver<()> {
         oneshot_ms(if let NodeType::Leader{..} = self.node_type {
-            150 
+            150
         } else {
             300 + (rng.gen::<u32>() % 150u32)
         })
@@ -84,7 +84,7 @@ impl Node {
 
     fn classify(&self, msg: Msg) -> MsgClass {
         match msg.msg {
-            MsgType::Get(_) 
+            MsgType::Get(_)
                 | MsgType::Put(..)
                 | MsgType::OK(_)
                 | MsgType::Redirect
@@ -138,9 +138,9 @@ impl Node {
                     self.base.voted_for = None;
                     self.base.leader = msg.base.leader;
 
-                    if let Some(idx) = self.base.index_of(details.last_entry, details.last_entry_term) {
+                    if self.base.index_of(details.last_entry, details.last_entry_term) {
                         //println!("{} received a valid append entryi, len: {}", self.base.id, self.base.log.len());
-                        self.base.log.truncate(idx);
+                        self.base.log.truncate(details.last_entry as usize);
                         if let Some(entries) = entries {
                             self.base.log.extend(entries);
                         }
@@ -165,25 +165,25 @@ impl Node {
                 self.send(&outgoing);
             },
 
-            MsgType::AEResp { term, success, match_index } => {
-                let retry_id = if let NodeType::Leader {ref mut next_indicies, ref mut match_indicies, ..} = self.node_type {
+            MsgType::AEResp { success, match_index, .. } => {
+                let retry_id = if let NodeType::Leader {
+                    ref mut next_indicies,
+                    ref mut match_indicies,
+                    ..
+                } = self.node_type {
                     if success {
                         match_indicies.insert(msg.base.src, match_index);
                         next_indicies.insert(msg.base.src, match_index + 1);
-
                         None
                     } else {
-                        if let Some(idx) = match_indicies.get(&msg.base.src) {
+                        match_indicies.get(&msg.base.src).map(|idx| {
                             let new_idx =  cmp::max(*idx, 1) - 1;
                             next_indicies.insert(msg.base.src, new_idx);
-
-                            Some((msg.base.src, new_idx))
-                        } else {
-                            None 
-                        }
+                            (msg.base.src, new_idx)
+                        })
                     }
                 } else {
-                    None   
+                    None
                 };
 
                 if let Some((id, new_idx)) = retry_id {
@@ -221,13 +221,13 @@ impl Node {
             },
             MsgType::Put(key, value) => {
                 let append = if let NodeType::Leader {ref mut outstanding, ..} = self.node_type {
-                    let entry = Entry { 
-                        key: key.clone(), 
-                        value: value.clone(), 
+                    let entry = Entry {
+                        key: key.clone(),
+                        value: value.clone(),
                         term: self.base.current_term
                     };
                     outstanding.insert(entry.clone(), outgoing);
-                    
+
                     Some(entry)
                 } else {
                     outgoing.msg = MsgType::Redirect;
@@ -286,7 +286,7 @@ impl Node {
         } else {
             if leader_commit > self.base.commit_idx {
                 ////println!("about to loop");
-                let range = self.base.commit_idx as usize 
+                let range = self.base.commit_idx as usize
                     .. cmp::min(self.base.last_index() as usize, leader_commit as usize);
                 for entry in &self.base.log[range] {
                     ////println!("inserting {:?}", entry);
@@ -332,7 +332,7 @@ impl Node {
         }
 
         self.node_type = NodeType::Leader {
-            next_indicies: next_indicies, 
+            next_indicies: next_indicies,
             match_indicies: match_indicies,
             outstanding: HashMap::new()
         };
@@ -345,7 +345,7 @@ impl Node {
         for to in &self.base.neighbors {
             let base = BaseMsg::new(self.base.id,
                                     *to,
-                                    self.base.leader, 
+                                    self.base.leader,
                                     "rv".to_owned());
             let rv = Msg {
                 base: base,
@@ -367,7 +367,7 @@ impl Node {
             for node in &self.base.neighbors {
                 let base = BaseMsg::new(self.base.id,
                                         *node,
-                                        self.base.leader, 
+                                        self.base.leader,
                                         "append".to_owned());
                 let heartbeat = Msg {
                     base: base,
@@ -377,7 +377,7 @@ impl Node {
                        entries: None,
                     },
                 };
-               
+
                 self.send(&heartbeat);
             }
         }
@@ -389,7 +389,7 @@ impl Node {
             for node in &self.base.neighbors {
                 let base = BaseMsg::new(self.base.id,
                                         *node,
-                                        self.base.leader, 
+                                        self.base.leader,
                                         "append".to_owned());
                 let append = Msg {
                     base: base,
@@ -399,7 +399,7 @@ impl Node {
                        entries: Some(vec![entry.clone()]),
                     },
                 };
-               
+
                 self.send(&append);
             }
         }
@@ -408,11 +408,11 @@ impl Node {
     fn send_retry_append(&self, dst: NodeId, idx: u64) {
         let base = BaseMsg::new(self.base.id,
                                 dst,
-                                self.base.leader, 
+                                self.base.leader,
                                 "retry".to_owned());
         ////println!("looking up!");
-        let details = InternalMsg::new(self.base.current_term, 
-                                       idx, 
+        let details = InternalMsg::new(self.base.current_term,
+                                       idx,
                                        self.base.get_term(idx));
         let retry = Msg {
             base: base,
@@ -425,7 +425,7 @@ impl Node {
         ////println!("found");
         self.send(&retry);
     }
-    
+
     fn get_chunk_index(&self, idx: usize) -> usize {
         cmp::min(idx + 35, cmp::max(self.base.log.len(), 1) - 1)
     }
@@ -482,20 +482,18 @@ impl BaseNode {
     }
 
     fn last_index(&self) -> u64 {
-        cmp::max(self.log.len(), 1) as u64 - 1 
+        cmp::max(self.log.len(), 1) as u64 - 1
     }
 
 
-    fn index_of(&self, index: u64, term: u64) -> Option<usize> {
+    fn index_of(&self, index: u64, term: u64) -> bool {
         if index == 0 {
-            Some(0)
+            true
         } else {
-            self.log.get(index as usize)
-                .and_then(|entry| if entry.term == term { 
-                    Some(index as usize) 
-                } else { 
-                    None 
-                })
+            match self.log.get(index as usize) {
+                Some(entry) => entry.term == term,
+                None => false
+            }
         }
     }
 }
@@ -554,10 +552,10 @@ impl From<String> for NodeId {
 
 impl fmt::Display for NodeId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&format!("[{}{}{}{}]", self.0[0] as char, 
-                                  self.0[1] as char, 
-                                  self.0[2] as char, 
-                                  self.0[3] as char), 
+        fmt::Display::fmt(&format!("[{}{}{}{}]", self.0[0] as char,
+                                  self.0[1] as char,
+                                  self.0[2] as char,
+                                  self.0[3] as char),
                           f)
     }
 }

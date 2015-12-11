@@ -166,14 +166,14 @@ impl MsgType {
             .map_or(None, |entries| {
                 if entries.is_array() {
                     Some(entries.as_array()
-                        .expect("entries must be an array") 
-                        .iter() 
-                        .map(Entry::from) 
+                        .expect("entries must be an array")
+                        .iter()
+                        .map(Entry::from)
                         .collect())
                 } else {
-                    None   
+                    None
                 }
-            }); 
+            });
         MsgType::AppendEntries {
             details: int_msg,
             leader_commit: get!(json -> "leader_commit"; Json::as_u64),
