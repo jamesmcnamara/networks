@@ -134,7 +134,8 @@ impl Node {
                     MsgType::AEResp {
                        term: self.base.current_term,
                        success: false,
-                       match_index: self.base.last_index()
+                       match_index: self.base.last_index(),
+                       commit_idx: self.base.commit_idx,
                     }
                 } else {
                     self.maybe_update_term(details.term);
@@ -154,14 +155,16 @@ impl Node {
                         MsgType::AEResp {
                            term: self.base.current_term,
                            success: true,
-                           match_index: self.base.last_index()
+                           match_index: self.base.last_index(),
+                           commit_idx: self.base.commit_idx,
                         }
                     } else {
                         println!("{} received a bad append entry: don't have {} with {}, log len: {}, term is {}", self.base.id, details.last_entry, details.last_entry_term, self.base.log.len(), self.base.current_term);
                         MsgType::AEResp {
                            term: self.base.current_term,
                            success: false,
-                           match_index: self.base.last_index()
+                           match_index: self.base.last_index(),
+                           commit_idx: self.base.commit_idx,
                         }
                     }
                 };
@@ -169,12 +172,17 @@ impl Node {
                 self.send(&outgoing);
             },
 
-            MsgType::AEResp { success, match_index, term } => {
+            MsgType::AEResp { success, match_index, term, commit_idx } => {
                 if term > self.base.current_term {
                     self.base.current_term = term;
                     self.node_type = NodeType::Follower;
                     return;
+                };
+
+                if self.base.commit_idx < commit_idx {
+                    self.leader_emergency_commit(commit_idx);    
                 }
+
                 let retry_id = if let NodeType::Leader {
                     ref mut next_indicies,
                     ref mut match_indicies,
@@ -323,6 +331,14 @@ impl Node {
         details.term > self.base.current_term
             && details.last_entry >= self.base.last_index()
             && details.last_entry_term >= self.base.log.last().map_or(0, |entry| entry.term)
+    }
+
+    fn leader_emergency_commit(&mut self, commit_idx: u64) {
+        println!("EMERGENCY COMMITING {} to {}", self.base.commit_idx, commit_idx);
+        for entry in &self.base.log[self.base.commit_idx as usize .. commit_idx as usize + 1] {
+            self.base.state_machine.insert(entry.key.clone(), entry.value.clone());
+        }
+        self.base.commit_idx = commit_idx;
     }
 
     fn into_candidate(&mut self) {

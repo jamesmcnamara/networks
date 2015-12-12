@@ -104,6 +104,7 @@ pub enum MsgType {
         term: u64,
         success: bool,
         match_index: u64,
+        commit_idx: u64,
     },
     RequestVote {
         details: InternalMsg,
@@ -128,10 +129,11 @@ impl MsgType {
                 d.add_json("leader_commit", leader_commit);
                 d.add_json("entries", entries.clone());
             },
-            MsgType::AEResp {term, success, match_index} => {
+            MsgType::AEResp {term, success, match_index, commit_idx} => {
                 d.add_json("term", term);
                 d.add_json("success", success);
                 d.add_json("match_index", match_index);
+                d.add_json("commit_idx", commit_idx);
             },
             MsgType::RequestVote {ref details, ref candidate_id} => {
                 details.fill(d);
@@ -186,6 +188,7 @@ impl MsgType {
             term: get!(json -> "term"; Json::as_u64),
             success: get!(json -> "success"; Json::as_boolean),
             match_index: get!(json -> "match_index"; Json::as_u64),
+            commit_idx: get!(json -> "commit_idx"; Json::as_u64),
         }
     }
 
