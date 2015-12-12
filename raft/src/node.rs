@@ -76,9 +76,9 @@ impl Node {
 
     fn reset_timer(&self, rng: &mut rand::ThreadRng) -> mpsc::Receiver<()> {
         oneshot_ms(if let NodeType::Leader{..} = self.node_type {
-            150
+            100
         } else {
-            300 + (rng.gen::<u32>() % 150u32)
+            150 + (rng.gen::<u32>() % 150u32)
         })
     }
 
@@ -99,11 +99,14 @@ impl Node {
         outgoing.base.leader = self.base.leader;
         match msg.msg {
             MsgType::RequestVote { details, candidate_id } => {
-                let ulysses_grant_vote = self.grant_vote(details, candidate_id);
+                let term = details.term;
+                let ulysses_grant_vote = self.grant_vote(details);
                 if ulysses_grant_vote {
-                    ////println!("{} is voting for {}", self.base.id, candidate_id);
+                    println!("{} is voting for {}", self.base.id, candidate_id);
                     self.base.voted_for = Some(candidate_id);
+                    self.node_type = NodeType::Follower;
                 }
+                self.maybe_update_term(term);
                 outgoing.msg = MsgType::RVResp(self.base.current_term, ulysses_grant_vote);
                 self.send(&outgoing);
             },
@@ -127,6 +130,7 @@ impl Node {
 
             MsgType::AppendEntries {details, leader_commit, entries} => {
                 outgoing.msg = if details.term < self.base.current_term {
+                    println!("{} is not leader any more", msg.base.src);
                     MsgType::AEResp {
                        term: self.base.current_term,
                        success: false,
@@ -138,9 +142,9 @@ impl Node {
                     self.base.voted_for = None;
                     self.base.leader = msg.base.leader;
 
-                    if self.base.index_of(details.last_entry, details.last_entry_term) {
-                        //println!("{} received a valid append entryi, len: {}", self.base.id, self.base.log.len());
-                        self.base.log.truncate(details.last_entry as usize);
+                    if self.base.contains_term(details.last_entry, details.last_entry_term) {
+                        println!("{} received a valid append entry, len: {}", self.base.id, self.base.log.len());
+                        self.base.log.truncate(details.last_entry as usize + 1);
                         if let Some(entries) = entries {
                             self.base.log.extend(entries);
                         }
@@ -153,7 +157,7 @@ impl Node {
                            match_index: self.base.last_index()
                         }
                     } else {
-                        //println!("{} received a bad append entry: don't have {} with {}, log len: {}, term is", self.base.id, details.last_entry, details.last_entry_term, self.base.log.len());
+                        println!("{} received a bad append entry: don't have {} with {}, log len: {}, term is {}", self.base.id, details.last_entry, details.last_entry_term, self.base.log.len(), self.base.current_term);
                         MsgType::AEResp {
                            term: self.base.current_term,
                            success: false,
@@ -165,22 +169,27 @@ impl Node {
                 self.send(&outgoing);
             },
 
-            MsgType::AEResp { success, match_index, .. } => {
+            MsgType::AEResp { success, match_index, term } => {
+                if term > self.base.current_term {
+                    self.base.current_term = term;
+                    self.node_type = NodeType::Follower;
+                    return;
+                }
                 let retry_id = if let NodeType::Leader {
                     ref mut next_indicies,
                     ref mut match_indicies,
                     ..
                 } = self.node_type {
                     if success {
+                        println!("received success from {}, match is {} next is {}", msg.base.src, match_index, match_index + 1);
                         match_indicies.insert(msg.base.src, match_index);
-                        next_indicies.insert(msg.base.src, match_index + 1);
+                        next_indicies.insert(msg.base.src, cmp::min(match_index + 1, self.base.log.len() as u64));
                         None
                     } else {
-                        match_indicies.get(&msg.base.src).map(|idx| {
-                            let new_idx =  cmp::max(*idx, 1) - 1;
-                            next_indicies.insert(msg.base.src, new_idx);
-                            (msg.base.src, new_idx)
-                        })
+                        println!("leader received a fail from {} with last idx {} next is {}", msg.base.src, match_index, next_indicies.get(&msg.base.src).unwrap());
+                        let new_idx = safe_sub1(*next_indicies.get(&msg.base.src).unwrap());
+                        next_indicies.insert(msg.base.src, new_idx);
+                        Some((msg.base.src, new_idx))
                     }
                 } else {
                     None
@@ -202,14 +211,14 @@ impl Node {
         let mut outgoing = msg.clone();
         mem::swap(&mut outgoing.base.src, &mut outgoing.base.dst);
         outgoing.base.leader = self.base.leader;
-        ////println!("{} got client message: {}", self.base.id, msg.to_json());
+        println!("{} got client message: {}", self.base.id, msg.to_json());
         match msg.msg {
             MsgType::Get(key) => {
                 outgoing.msg = if let NodeType::Leader { .. } = self.node_type {
                     match self.base.state_machine.get(&key) {
                         Some(value) => MsgType::OK(value.clone()),
                         None        => {
-                            ////println!("leader {} can't find key {}", self.base.id, key);
+                            println!("leader {} can't find key {}", self.base.id, key);
                             MsgType::Fail
                         }
                     }
@@ -238,7 +247,7 @@ impl Node {
                 };
 
                 if let Some(entry) = append {
-                    //println!("leader len is {}", self.base.log.len());
+                    println!("{} sending append {}", self.base.id, self.base.log.len());
                     self.send_append_entries(entry.clone());
                     self.base.log.push(entry);
                 }
@@ -252,7 +261,7 @@ impl Node {
 
     fn maybe_update_term(&mut self, term: u64) {
         if term > self.base.current_term {
-            //println!("new term: {}", term);
+            println!("new term: {}, commit_idx: {}", term, self.base.commit_idx);
             self.base.current_term = term
         }
     }
@@ -265,12 +274,13 @@ impl Node {
             matches.sort();
             let majority_idx = matches.len() / 2;
             ////println!("about to look at index: {}", majority_idx);
-            let committable = *(matches[majority_idx]);
+            let committable = *(matches[majority_idx]) as usize;
             ////println!("look in index: {} and found {}", majority_idx, committable);
 
-            if committable > leader_commit {
-                //println!("about to loop and log len is {}, matches is {:?}, commitable: {}", self.base.log.len(), matches, committable);
-                for entry in &self.base.log[leader_commit as usize .. committable as usize + 1] {
+            if committable > leader_commit as usize 
+                && self.base.log[committable].term == self.base.current_term {
+                println!("{} about to commit and log len is {}, matches is {:?}, committable: {}", self.base.id, self.base.log.len(), matches, committable);
+                for entry in &self.base.log[leader_commit as usize .. committable + 1] {
                     ////println!("inserting {:?}", entry);
                     self.base.state_machine.insert(entry.key.clone(), entry.value.clone());
                     if let Some(mut msg) = outstanding.remove(entry) {
@@ -278,39 +288,45 @@ impl Node {
                         msgs.push(msg);
                     }
                 }
-                ////println!("success");
-               self.base.commit_idx = majority_idx as u64;
-
+                println!("success");
+               self.base.commit_idx = committable as u64;
+               self.base.last_applied = committable as u64;
                ////println!("outstanding is: {:?}", outstanding.values().collect_vec());
             }
         } else {
-            if leader_commit > self.base.commit_idx {
+            if leader_commit > self.base.last_applied {
                 ////println!("about to loop");
-                let range = self.base.commit_idx as usize
-                    .. cmp::min(self.base.last_index() as usize, leader_commit as usize);
-                for entry in &self.base.log[range] {
-                    ////println!("inserting {:?}", entry);
+                let upper_bound = cmp::min(self.base.log.len() as u64, leader_commit + 1);
+                let mut i = self.base.commit_idx;
+                for entry in &self.base.log[self.base.commit_idx as usize .. upper_bound as usize] {
+                    println!("{} is inserting {}: {} at idx: {}", self.base.id, entry.key, entry.value, i);
+                    i += 1;
                     self.base.state_machine.insert(entry.key.clone(), entry.value.clone());
                 }
                 self.base.commit_idx = leader_commit;
+                self.base.last_applied = upper_bound;
+                if upper_bound < leader_commit {
+                    println!("{} DOESN'T HAVE ALL LOGS! COMMIT IDX: {} THEY ONLY HAVE {}", self.base.id, leader_commit, upper_bound);
+                }
             }
         }
 
         for msg in msgs {
-            ////println!("{} response is {}", self.base.id, msg.to_json());
+            if let MsgType::OK(ref key) = msg.msg {
+                println!("{} commit idx is {} key is {}", self.base.id, self.base.commit_idx, key);
+            }
             self.send(&msg);
         }
     }
 
-    fn grant_vote(&self, details: InternalMsg, candidate_id: NodeId) -> bool {
+    fn grant_vote(&self, details: InternalMsg) -> bool {
         details.term > self.base.current_term
             && details.last_entry >= self.base.last_index()
-            && details.last_entry_term == self.base.log.last().map_or(0, |entry| entry.term)
-            && self.base.voted_for.map_or(true, |candidate| candidate == candidate_id)
+            && details.last_entry_term >= self.base.log.last().map_or(0, |entry| entry.term)
     }
 
     fn into_candidate(&mut self) {
-        ////println!("{} is becoming a candidate", self.base.id);
+        println!("{} is becoming a candidate", self.base.id);
         let mut votes = HashSet::new();
         votes.insert(self.base.id);
         mem::replace(&mut self.node_type, NodeType::Candidate(votes));
@@ -322,7 +338,7 @@ impl Node {
 
 
     fn into_leader(&mut self) {
-        ////println!("{} IS THE LEADER", self.base.id);
+        println!("{} IS THE LEADER", self.base.id);
         self.base.leader = self.base.id;
         let mut match_indicies = HashMap::new();
         let mut next_indicies = HashMap::new();
@@ -361,26 +377,49 @@ impl Node {
 
 
     fn send_heartbeat(&self) {
-        //println!("sending hearbeat");
-        if let NodeType::Leader {..} = self.node_type {
-            let details = self.make_details();
+        if let NodeType::Leader {ref next_indicies, ..} = self.node_type {
             for node in &self.base.neighbors {
-                let base = BaseMsg::new(self.base.id,
-                                        *node,
-                                        self.base.leader,
-                                        "append".to_owned());
-                let heartbeat = Msg {
-                    base: base,
-                    msg: MsgType::AppendEntries {
-                       details: details.clone(),
-                       leader_commit: self.base.commit_idx,
-                       entries: None,
-                    },
-                };
+                self.send_retry_append(*node, *next_indicies.get(node).unwrap());
 
-                self.send(&heartbeat);
             }
+            // for node in &self.base.neighbors {
+            //     let base = BaseMsg::new(self.base.id,
+            //                             *node,
+            //                             self.base.leader,
+            //                             "append".to_owned());
+            //     let heartbeat = Msg {
+            //         base: base,
+            //         msg: MsgType::AppendEntries {
+            //            details: details.clone(),
+            //            leader_commit: self.base.commit_idx,
+            //            entries: None,
+            //         },
+            //     };
+
+            //     self.send(&heartbeat);
+            // }
         }
+    }
+
+    fn send_retry_append(&self, dst: NodeId, last_idx: u64) {
+        let base = BaseMsg::new(self.base.id,
+                                dst,
+                                self.base.leader,
+                                "retry".to_owned());
+        let details = InternalMsg::new(self.base.current_term,
+                                       safe_sub1(last_idx),
+                                       self.base.get_term(safe_sub1(last_idx)));
+        println!("sending retry append to {} with last as {}", dst, last_idx);
+        let retry = Msg {
+            base: base,
+            msg: MsgType::AppendEntries {
+                details: details,
+                leader_commit: self.base.commit_idx,
+                entries: Some(self.base.log[last_idx as usize..self.get_chunk_index(last_idx as usize)].to_vec())
+            }
+        };
+        ////println!("found");
+        self.send(&retry);
     }
 
     fn send_append_entries(&self, entry: Entry) {
@@ -399,35 +438,15 @@ impl Node {
                        entries: Some(vec![entry.clone()]),
                     },
                 };
-
+                
+                println!("sending normal append to {} with last as {}", node, details.last_entry);
                 self.send(&append);
             }
         }
     }
 
-    fn send_retry_append(&self, dst: NodeId, idx: u64) {
-        let base = BaseMsg::new(self.base.id,
-                                dst,
-                                self.base.leader,
-                                "retry".to_owned());
-        ////println!("looking up!");
-        let details = InternalMsg::new(self.base.current_term,
-                                       idx,
-                                       self.base.get_term(idx));
-        let retry = Msg {
-            base: base,
-            msg: MsgType::AppendEntries {
-                details: details,
-                leader_commit: self.base.commit_idx,
-                entries: Some(self.base.log[idx as usize..self.get_chunk_index(idx as usize)].to_vec())
-            }
-        };
-        ////println!("found");
-        self.send(&retry);
-    }
-
     fn get_chunk_index(&self, idx: usize) -> usize {
-        cmp::min(idx + 35, cmp::max(self.base.log.len(), 1) - 1)
+        cmp::min(idx + 35, self.base.log.len())
     }
 
     fn make_details(&self) -> InternalMsg {
@@ -453,6 +472,7 @@ struct BaseNode {
     leader: NodeId,
     log: Vec<Entry>,
     commit_idx: u64,
+    last_applied: u64,
     neighbors: Vec<NodeId>,
     reader: mpsc::Receiver<Msg>,
     writer: cell::RefCell<UnixStream>,
@@ -470,6 +490,7 @@ impl BaseNode {
             leader: NodeId::broadcast(),
             log: vec![],
             commit_idx: 0,
+            last_applied: 0,
             neighbors: neighbors.map(NodeId::from).collect(),
             reader: reader,
             writer: cell::RefCell::new(writer),
@@ -482,13 +503,13 @@ impl BaseNode {
     }
 
     fn last_index(&self) -> u64 {
-        cmp::max(self.log.len(), 1) as u64 - 1
+        safe_sub1(self.log.len() as u64)
     }
 
 
-    fn index_of(&self, index: u64, term: u64) -> bool {
+    fn contains_term(&self, index: u64, term: u64) -> bool {
         if index == 0 {
-            true
+            self.log.len() == 0 || self.log[0].term == term
         } else {
             match self.log.get(index as usize) {
                 Some(entry) => entry.term == term,
@@ -496,6 +517,10 @@ impl BaseNode {
             }
         }
     }
+}
+
+fn safe_sub1(i: u64) -> u64 {
+    cmp::max(i, 1) - 1 as u64
 }
 
 enum NodeType {
