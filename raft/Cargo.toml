@@ -1,0 +1,12 @@
+[package]
+name = "raft"
+version = "0.1.0"
+authors = ["jamesmcnamara <jamesscottmcnamara@gmail.com>"]
+
+[dependencies]
+rustc-serialize = "0.3"
+rand = "0.3"
+itertools = "0.4.1"
+schedule_recv = "0.0.1"
+time = "0.1.33"
+unix_socket = "0.5.0"
